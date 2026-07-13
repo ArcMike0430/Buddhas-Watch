@@ -93,6 +93,12 @@ The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 a
 - UDP streaming to Jetson (online mode)
 - Dual-mode operation — seamless transition
 
+### Transport Fallback
+- Primary CSI transport: UDP (`5500`) over Wi-Fi
+- Fallback transport: BLE GATT stream when Wi-Fi path is unavailable
+- Final fallback: USB CDC serial for direct cable-to-compute-node operation
+- Runtime transport selector is implemented in `firmware/esp32-s3/main/transport_manager.c` and `python/tools/transport_manager.py`
+
 ## Repository Structure
 
 ```
@@ -115,7 +121,8 @@ Buddhas-Watch/
 │   │   ├── csi_phase_variance_monitor.py      # Phase variance detection
 │   │   ├── csi_phase_coherence_monitor.py     # + Cross-subcarrier coherence
 │   │   ├── csi_spectrogram_monitor.py         # FFT spectrogram + persistence + watch alerts
-│   │   └── csi_defense.py                    # Integrated detection + anti-phase
+│   │   ├── csi_defense.py                     # Integrated detection + anti-phase
+│   │   └── multi_watch_aggregator.py          # Multi-watch aggregation entry point
 │   ├── quantum/
 │   │   ├── quantum_enhanced_detection.py      # Qiskit hybrid backend + classical fallback
 │   │   └── variational_anomaly.py             # (future) VQE-based anomaly threshold
@@ -125,7 +132,8 @@ Buddhas-Watch/
 │   │   └── esp32_alert.py                    # UDP commands back to watches (alert, rf_burst, lock, sweep)
 │   └── tools/
 │       ├── baseline_calibrator.py             # Baseline learning utility → baseline.json
-│       └── fleet_broadcaster.py              # Multi-node sync/command broadcast
+│       ├── fleet_broadcaster.py               # Multi-node sync/command broadcast
+│       └── transport_manager.py               # UDP/BLE/USB transport selection helper
 ├── docs/
 │   ├── architecture/
 │   ├── protocols/
