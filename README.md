@@ -59,10 +59,34 @@ A real-time, multi-node Channel State Information (CSI) monitoring and anomaly d
 - Detect structured interference that never exceeds noise floor per subcarrier
 - One-shot anomaly detection via quantum-like computation on classical hardware (Jetson GPU)
 
-### Counter-Measures
-- Anti-phase acoustic emission at detected resonance frequencies
-- ESP32 RF noise/sweep for shared field disruption
-- Efuse-style locking for MAC/ID protection and biometric template permanence
+## Counter-Measures
+
+When an anomaly is detected, the system sends UDP commands back to the ESP32 watches:
+
+| Command | Action | Trigger |
+|---------|--------|---------|
+| `alert` | Flash display red + vibrate motor | Any detection |
+| `rf_burst` | Transmit RF noise on detected band | Severe anomaly (SNR > 20 dB) |
+| `lock` | Lock Wi-Fi channel to prevent forced deauth | Persistent interference |
+| `log_marker` | Write event marker to SD card | All detections |
+| `sweep` | Sweep BLE/Wi-Fi across frequency range | Unresolved pattern |
+| `silence` | Cancel all active counter-measures | Manual or auto-expiry |
+
+### Command Flow
+
+```
+Jetson (detection) ──UDP:5501──► ESP32 Watch
+                                    │
+                                    ├── display_show_alert()
+                                    ├── vibrator_pulse()
+                                    ├── wifi_transmit_noise()
+                                    ├── wifi_lock_channel()
+                                    └── sdcard_write_log_marker()
+```
+
+### Firmware
+
+The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 and dispatches commands to hardware control functions. Implement the hardware functions (`display_show_alert`, `vibrator_pulse`, `wifi_transmit_noise`, etc.) to match your specific watch hardware.
 
 ### Data Logging
 - SD card local logging (offline mode — operates without Jetson)
@@ -90,19 +114,18 @@ Buddhas-Watch/
 │   ├── csi_monitor/
 │   │   ├── csi_phase_variance_monitor.py      # Phase variance detection
 │   │   ├── csi_phase_coherence_monitor.py     # + Cross-subcarrier coherence
-│   │   ├── csi_spectrogram_monitor.py         # FFT spectrogram + persistence
+│   │   ├── csi_spectrogram_monitor.py         # FFT spectrogram + persistence + watch alerts
 │   │   └── csi_defense.py                    # Integrated detection + anti-phase
 │   ├── quantum/
-│   │   ├── quantum_enhanced_detection.py      # Qiskit hybrid backend
-│   │   └── variational_anomaly.py             # VQE-based anomaly threshold
+│   │   ├── quantum_enhanced_detection.py      # Qiskit hybrid backend + classical fallback
+│   │   └── variational_anomaly.py             # (future) VQE-based anomaly threshold
 │   ├── analysis/
-│   │   ├── phase_variance_analysis.py         # Offline analysis tools
-│   │   └── cross_correlation.py               # Multi-node correlation
+│   │   └── (analysis tools — coming soon)
 │   ├── countermeasures/
-│   │   └── anti_phase_emitter.py              # Acoustic counter-measure control
+│   │   └── esp32_alert.py                    # UDP commands back to watches (alert, rf_burst, lock, sweep)
 │   └── tools/
-│       ├── baseline_calibrator.py             # Baseline learning utility
-│       └── fleet_broadcaster.py               # Multi-node sync/command
+│       ├── baseline_calibrator.py             # Baseline learning utility → baseline.json
+│       └── fleet_broadcaster.py              # Multi-node sync/command broadcast
 ├── docs/
 │   ├── architecture/
 │   ├── protocols/
