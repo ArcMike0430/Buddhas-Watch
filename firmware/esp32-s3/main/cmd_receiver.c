@@ -124,6 +124,7 @@ static void handle_command(const char *json_str) {
         int ch_end   = (int)roundf((e - 2407.0f) / 5.0f);
         if (ch_start < 1)  ch_start = 1;
         if (ch_end   > 13) ch_end   = 13;
+        if (ch_start > ch_end) ch_start = ch_end;
         for (int ch = ch_start; ch <= ch_end; ch++) {
             wifi_lock_channel(ch);
             vTaskDelay(pdMS_TO_TICKS(10));
