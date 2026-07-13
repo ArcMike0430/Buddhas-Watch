@@ -90,7 +90,7 @@ The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 a
 
 ### Data Logging
 - SD card local logging (offline mode — operates without Jetson)
-- UDP streaming to Jetson (online mode)
+- CSI transport intake supports Wi-Fi (UDP), BLE bridge (TCP), and USB cable (serial) on compute nodes
 - Dual-mode operation — seamless transition
 
 ## Repository Structure
@@ -164,6 +164,9 @@ python csi_phase_variance_monitor.py
 
 # Full detection + anti-phase loop
 python csi_defense.py
+
+# Optional transport override for compute node intake: wifi | ble | cable
+CSI_INPUT_TRANSPORT=wifi python csi_phase_variance_monitor.py
 ```
 
 ### 3. Baseline Calibration

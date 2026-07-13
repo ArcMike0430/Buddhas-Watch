@@ -8,13 +8,13 @@ Part of Buddhas-Watch — Production-grade distributed CSI collection system.
 """
 
 import socket
-import struct
 import numpy as np
 from collections import deque
 import time
-import json
+import os
 import logging
 from typing import Optional, Callable
+from transport_manager import CSITransportManager, extract_phase_samples
 
 # ====================== CONFIGURATION ======================
 UDP_IP = "0.0.0.0"
@@ -125,27 +125,34 @@ def example_udp_listener():
 
     monitor.on_detection = detection_callback
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((UDP_IP, UDP_PORT))
-    sock.settimeout(1.0)
+    transport = CSITransportManager(
+        transport=os.getenv("CSI_INPUT_TRANSPORT", "wifi"),
+        host=UDP_IP,
+        udp_port=UDP_PORT,
+        timeout=1.0,
+    )
+    transport.open()
 
     logger.info("Starting CSI Phase Variance Monitor...")
 
     try:
         while True:
             try:
-                data, addr = sock.recvfrom(4096)
-                try:
-                    packet = json.loads(data.decode())
-                    phase = float(packet.get('phase', 0))
-                    freq = packet.get('frequency', None)
-                    variance = monitor.process_sample(phase, freq)
-                except (json.JSONDecodeError, KeyError, ValueError):
+                packet, _ = transport.receive_packet()
+                if not packet:
                     continue
+                phases = extract_phase_samples(packet)
+                if not phases:
+                    continue
+                freq = packet.get('frequency', None)
+                for phase in phases:
+                    variance = monitor.process_sample(phase, freq)
             except socket.timeout:
                 continue
     except KeyboardInterrupt:
         logger.info("Monitor stopped by user.")
+    finally:
+        transport.close()
 
 
 if __name__ == "__main__":

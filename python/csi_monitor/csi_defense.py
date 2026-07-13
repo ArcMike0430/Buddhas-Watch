@@ -7,13 +7,13 @@ Monitors phase variance across multiple nodes, emits counter-measures on detecti
 Part of Buddhas-Watch — Production-grade distributed CSI collection system.
 """
 
-import socket
 import threading
 import time
-import json
+import os
 import numpy as np
 from collections import deque, defaultdict
 import sounddevice as sd
+from transport_manager import CSITransportManager, extract_phase_samples
 
 # ===================== CONFIG =====================
 UDP_PORT = 5500
@@ -33,17 +33,21 @@ phase_buffers = {nid: deque(maxlen=int(SAMPLING_RATE * BUFFER_DURATION * 2))
 peak_persistence = defaultdict(lambda: defaultdict(int))
 last_alert = defaultdict(float)
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.bind(('0.0.0.0', UDP_PORT))
+transport_manager = CSITransportManager(
+    transport=os.getenv("CSI_INPUT_TRANSPORT", "wifi"),
+    udp_port=UDP_PORT,
+)
+transport_manager.open()
 
 def udp_listener():
     while True:
         try:
-            data, _ = sock.recvfrom(4096)
-            packet = json.loads(data.decode('utf-8'))
+            packet, _ = transport_manager.receive_packet()
+            if not packet:
+                continue
             node_id = packet.get('node_id', 'unknown')
             if node_id in phase_buffers:
-                for p in packet.get('phase', []):
+                for p in extract_phase_samples(packet):
                     phase_buffers[node_id].append(p)
         except Exception:
             pass
