@@ -22,7 +22,7 @@ from typing import Optional, List, Dict
 try:
     from qiskit import QuantumCircuit, transpile
     from qiskit_aer import AerSimulator
-    from qiskit.quantum_info import state_fidelity
+    from qiskit.quantum_info import Statevector, state_fidelity
     QISKIT_AVAILABLE = True
 except ImportError:
     QISKIT_AVAILABLE = False
@@ -37,79 +37,119 @@ class QuantumCoherenceDetector:
     a quantum-like state vector. When interference is present,
     the phase coherence structure breaks in ways that classical
     per-subcarrier FFT cannot detect.
+
+    Implementation:
+        1. Map subcarrier phase differences to Ry rotation angles on
+           n_qubits qubits — each angle encodes a fraction of the
+           phase-difference distribution.
+        2. Apply Hadamard + Ry gates to build a parameterised state.
+        3. Simulate with AerSimulator (statevector method, GPU if available).
+        4. Extract statevector and compute von-Neumann-style entropy as
+           the coherence metric.
     """
     
-    def __init__(self, n_qubits: int = 8, coherence_threshold: float = 0.65):
+    def __init__(self, n_qubits: int = 6, coherence_threshold: float = 0.65):
         """
-        n_qubits: number of qubits for quantum simulation (8-15 is practical on Jetson)
-        coherence_threshold: below this value, the frame is flagged as anomalous
+        n_qubits: qubits for the quantum circuit (6 → 64-dim state)
+        coherence_threshold: below this value, the frame is flagged
         """
-        self.n_qubits = min(n_qubits, 15)  # Cap for Jetson performance
+        self.n_qubits = min(n_qubits, 12)   # Cap for Jetson performance
         self.coherence_threshold = coherence_threshold
         self.baseline_coherence = None
         self.baseline_frames = 0
-        self.baseline_target = 50  # Frames to calibrate
-        
-        # Quantum simulator (GPU if available)
+        self.baseline_target = 50
+
         self.simulator = None
         if QISKIT_AVAILABLE:
-            self.simulator = AerSimulator(method='statevector', device='GPU')
-            print(f"QuantumCoherenceDetector: Qiskit backend ready ({self.n_qubits} qubits, GPU)")
+            try:
+                self.simulator = AerSimulator(method='statevector', device='GPU')
+                print(f"QuantumCoherenceDetector: Qiskit GPU backend ready ({self.n_qubits} qubits)")
+            except Exception:
+                self.simulator = AerSimulator(method='statevector')
+                print(f"QuantumCoherenceDetector: Qiskit CPU backend ready ({self.n_qubits} qubits)")
         else:
             print("QuantumCoherenceDetector: Qiskit not available, using classical fallback")
-    
-    def _phase_to_statevector(self, subcarrier_phases: np.ndarray) -> np.ndarray:
+
+    # ------------------------------------------------------------------ #
+    #  Phase → quantum circuit                                             #
+    # ------------------------------------------------------------------ #
+
+    def _phases_to_angles(self, subcarrier_phases: np.ndarray) -> np.ndarray:
         """
-        Convert subcarrier phase differences into a quantum-like state vector.
-        
-        Phase differences between adjacent subcarriers encode coherence.
-        Random noise → uniform phase differences (low coherence).
-        Structured signal → correlated phase differences (high coherence).
+        Convert 52 subcarrier phases into n_qubits Ry rotation angles.
+
+        Steps:
+          1. Unwrap phases and compute adjacent differences.
+          2. Normalise differences to [0, π] (valid Ry range).
+          3. Bin into n_qubits values by computing the mean difference
+             within each equally-sized sub-band.
         """
-        if len(subcarrier_phases) < 2:
-            return np.zeros(2 ** min(4, self.n_qubits))
-        
-        # Unwrap phases
         phases = np.unwrap(np.array(subcarrier_phases, dtype=np.float64))
-        
-        # Compute phase differences between adjacent subcarriers
-        phase_diffs = np.diff(phases)
-        
-        # Normalize to [-π, π]
-        phase_diffs = np.arctan2(np.sin(phase_diffs), np.cos(phase_diffs))
-        
-        # Bin into coarse-grained state (quantum-like amplitudes)
-        n_bins = 2 ** min(self.n_qubits, 8)
-        hist, _ = np.histogram(phase_diffs, bins=n_bins, range=(-np.pi, np.pi))
-        
-        # Normalize to unit vector (quantum state)
-        state = hist.astype(np.float64)
-        norm = np.linalg.norm(state)
-        if norm > 0:
-            state = state / norm
-        
-        return state
-    
-    def _compute_quantum_coherence(self, state: np.ndarray) -> float:
+        diffs  = np.diff(phases)
+        # Wrap to [0, π] via abs then rescale
+        diffs  = np.abs(np.arctan2(np.sin(diffs), np.cos(diffs)))
+
+        # Bin into n_qubits values
+        bin_size = max(1, len(diffs) // self.n_qubits)
+        angles   = np.array([
+            np.mean(diffs[i * bin_size: (i + 1) * bin_size])
+            for i in range(self.n_qubits)
+        ])
+        return angles
+
+    def _build_circuit(self, angles: np.ndarray) -> "QuantumCircuit":
         """
-        Compute a coherence metric from the state vector.
-        
-        Pure quantum state (max coherence) → one dominant amplitude.
-        Mixed/thermal state (decoherence) → uniform amplitudes.
+        Build a parameterised quantum circuit from Ry angles.
+
+        Architecture:
+            H  — put each qubit in uniform superposition
+            Ry(θ) — rotate by phase-derived angle (encodes distribution)
+            CX chain — entangle adjacent qubits (captures correlations)
         """
-        # Shannon entropy of the normalized probability distribution
-        probs = state ** 2
-        probs = probs / (probs.sum() + 1e-12)
+        qc = QuantumCircuit(self.n_qubits)
+
+        # Layer 1: Hadamard to create superposition baseline
+        for i in range(self.n_qubits):
+            qc.h(i)
+
+        # Layer 2: Ry rotations encoding the phase-difference distribution
+        for i, theta in enumerate(angles):
+            qc.ry(float(theta), i)
+
+        # Layer 3: CNOT chain — captures inter-subcarrier correlations
+        for i in range(self.n_qubits - 1):
+            qc.cx(i, i + 1)
+
+        # Save statevector
+        qc.save_statevector()
+
+        return qc
+
+    def _run_circuit(self, qc: "QuantumCircuit") -> np.ndarray:
+        """Transpile, run on AerSimulator, return probability amplitudes."""
+        compiled = transpile(qc, self.simulator, optimization_level=0)
+        job      = self.simulator.run(compiled, shots=1)
+        result   = job.result()
+        sv       = result.get_statevector(compiled)
+        # Return probability distribution (|amplitude|²)
+        return np.abs(np.array(sv)) ** 2
+
+    def _entropy_coherence(self, probs: np.ndarray) -> float:
+        """
+        Convert a probability distribution into a coherence score [0, 1].
         
-        # Entropy (high = decoherent/noise, low = coherent/signal)
+        High coherence (peaked distribution) → low entropy → score near 1.
+        Decoherent (flat distribution) → high entropy → score near 0.
+        """
+        probs   = probs / (probs.sum() + 1e-12)
         entropy = -np.sum(probs * np.log2(probs + 1e-12))
-        
-        # Normalize: 0 = max coherence, 1 = max entropy
-        max_entropy = np.log2(len(state))
-        coherence = 1.0 - (entropy / max_entropy) if max_entropy > 0 else 0.0
-        
-        return float(coherence)
-    
+        max_ent = np.log2(len(probs))
+        return float(1.0 - entropy / max_ent) if max_ent > 0 else 0.0
+
+    # ------------------------------------------------------------------ #
+    #  Public API                                                          #
+    # ------------------------------------------------------------------ #
+
     def analyze_frame(self, subcarrier_phases: np.ndarray) -> Dict:
         """
         Analyze one frame of subcarrier phase data.
@@ -118,22 +158,27 @@ class QuantumCoherenceDetector:
             subcarrier_phases: Array of shape (52,) or (52, N) with phase values
             
         Returns:
-            Dict with keys: coherence, anomaly, delta_from_baseline
+            Dict with keys: coherence, anomaly, delta_from_baseline,
+                            calibrating, [frames_remaining | baseline]
         """
-        # Flatten to 1D
         if subcarrier_phases.ndim > 1:
-            # Use mean across time window
             phases = np.mean(subcarrier_phases, axis=1)
         else:
             phases = subcarrier_phases
-        
-        # Convert to quantum-like state
-        state = self._phase_to_statevector(phases)
-        
-        # Compute coherence
-        coherence = self._compute_quantum_coherence(state)
-        
-        # Update baseline (first N frames)
+
+        if len(phases) < 2:
+            return {"coherence": 0.0, "anomaly": False, "delta_from_baseline": 0.0}
+
+        if QISKIT_AVAILABLE and self.simulator is not None:
+            angles = self._phases_to_angles(phases)
+            qc     = self._build_circuit(angles)
+            probs  = self._run_circuit(qc)
+            coherence = self._entropy_coherence(probs)
+        else:
+            # Classical fallback via spectral entropy
+            coherence = ClassicalCoherenceDetector._compute_coherence_static(phases)
+
+        # Baseline calibration
         if self.baseline_frames < self.baseline_target:
             if self.baseline_coherence is None:
                 self.baseline_coherence = coherence
@@ -147,11 +192,11 @@ class QuantumCoherenceDetector:
                 "calibrating": True,
                 "frames_remaining": self.baseline_target - self.baseline_frames
             }
-        
-        # Compare to baseline
-        delta = coherence - self.baseline_coherence
-        anomaly = abs(delta) > (1.0 - self.coherence_threshold) or coherence < self.coherence_threshold
-        
+
+        delta   = coherence - self.baseline_coherence
+        anomaly = (abs(delta) > (1.0 - self.coherence_threshold)
+                   or coherence < self.coherence_threshold)
+
         return {
             "coherence": coherence,
             "anomaly": anomaly,
@@ -174,36 +219,34 @@ class ClassicalCoherenceDetector:
     
     def __init__(self, coherence_threshold: float = 0.65):
         self.coherence_threshold = coherence_threshold
-        self.baseline_coherence = None
-        self.baseline_frames = 0
-        self.baseline_target = 50
-    
-    def _compute_coherence(self, phases: np.ndarray) -> float:
-        """Compute phase coherence using FFT entropy."""
+        self.baseline_coherence  = None
+        self.baseline_frames     = 0
+        self.baseline_target     = 50
+
+    @staticmethod
+    def _compute_coherence_static(phases: np.ndarray) -> float:
+        """Compute phase coherence using FFT spectral entropy (static helper)."""
         phases = np.unwrap(np.array(phases, dtype=np.float64))
-        diffs = np.diff(phases)
-        diffs = np.arctan2(np.sin(diffs), np.cos(diffs))
-        
-        # FFT of phase differences
-        fft = np.fft.rfft(diffs)
-        power = np.abs(fft) ** 2
-        power = power / (power.sum() + 1e-12)
-        
-        # Spectral entropy
+        diffs  = np.diff(phases)
+        diffs  = np.arctan2(np.sin(diffs), np.cos(diffs))
+        fft    = np.fft.rfft(diffs)
+        power  = np.abs(fft) ** 2
+        power  = power / (power.sum() + 1e-12)
         entropy = -np.sum(power * np.log2(power + 1e-12))
-        max_entropy = np.log2(len(power))
-        coherence = 1.0 - (entropy / max_entropy) if max_entropy > 0 else 0.0
-        
-        return float(coherence)
-    
+        max_ent = np.log2(len(power))
+        return float(1.0 - entropy / max_ent) if max_ent > 0 else 0.0
+
+    def _compute_coherence(self, phases: np.ndarray) -> float:
+        return self._compute_coherence_static(phases)
+
     def analyze_frame(self, subcarrier_phases: np.ndarray) -> Dict:
         if subcarrier_phases.ndim > 1:
             phases = np.mean(subcarrier_phases, axis=1)
         else:
             phases = subcarrier_phases
-        
+
         coherence = self._compute_coherence(phases)
-        
+
         if self.baseline_frames < self.baseline_target:
             if self.baseline_coherence is None:
                 self.baseline_coherence = coherence
@@ -217,10 +260,10 @@ class ClassicalCoherenceDetector:
                 "calibrating": True,
                 "remaining": self.baseline_target - self.baseline_frames
             }
-        
-        delta = coherence - self.baseline_coherence
+
+        delta   = coherence - self.baseline_coherence
         anomaly = coherence < self.coherence_threshold
-        
+
         return {
             "coherence": coherence,
             "anomaly": anomaly,
@@ -243,20 +286,20 @@ def create_detector(use_quantum: bool = True) -> object:
 if __name__ == "__main__":
     detector = create_detector(use_quantum=False)
     print("Testing classical coherence detector...")
-    
-    # Simulate 52 subcarriers × 100 frames
+
     for i in range(100):
-        # Anomaly at frame 70-80: phase coherence breaks
+        # Anomaly at frame 70-80: random phase noise across all subcarriers
         if 70 <= i <= 80:
-            # Structured interference: noise across all subcarriers
             phases = np.random.uniform(-0.5, 0.5, 52)
         else:
-            # Normal: smooth phase progression
+            # Normal: smooth phase progression with small noise
             phases = np.linspace(0, 0.5, 52) + np.random.normal(0, 0.02, 52)
-        
+
         result = detector.analyze_frame(phases)
-        
+
         if result.get("anomaly"):
-            print(f"Frame {i}: ANOMALY — coherence={result['coherence']:.3f}, delta={result.get('delta', 0):.3f}")
-    
+            print(f"Frame {i}: ANOMALY — coherence={result['coherence']:.3f}, "
+                  f"delta={result.get('delta', 0):.3f}")
+
     print("Done.")
+
