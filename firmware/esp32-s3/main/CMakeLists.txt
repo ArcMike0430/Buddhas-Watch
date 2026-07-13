@@ -1,0 +1,22 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "cmd_receiver.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_event
+        esp_netif
+        lwip
+        json
+        csi
+        imu
+        audio
+        display
+        sdcard
+        ble
+        wifi_ctrl
+        power
+)
