@@ -96,21 +96,34 @@ static void wifi_csi_cb(void *ctx, wifi_csi_info_t *data)
     /* Append phase values (proper angle via atan2f) for all subcarriers */
     for (int i = 0; i < data->len && offset < 1900; i++) {
         float phase = atan2f((float)data->buf[i].imag, (float)data->buf[i].real);
-        offset += snprintf(packet + offset, sizeof(packet) - offset,
-            "%s%.4f", i > 0 ? "," : "", phase);
+        int written = snprintf(packet + offset,
+                               (size_t)(sizeof(packet) - offset),
+                               "%s%.4f", i > 0 ? "," : "", phase);
+        if (written < 0 || written >= (int)(sizeof(packet) - offset)) break;
+        offset += written;
     }
 
     /* Append magnitude array */
-    offset += snprintf(packet + offset, sizeof(packet) - offset, "],\"magnitudes\":[");
+    {
+        int written = snprintf(packet + offset,
+                               (size_t)(sizeof(packet) - offset),
+                               "],\"magnitudes\":[");
+        if (written > 0 && written < (int)(sizeof(packet) - offset))
+            offset += written;
+    }
     for (int i = 0; i < data->len && offset < 1980; i++) {
         float mag = sqrtf((float)(data->buf[i].real * data->buf[i].real) +
                           (float)(data->buf[i].imag * data->buf[i].imag));
-        offset += snprintf(packet + offset, sizeof(packet) - offset,
-            "%s%.4f", i > 0 ? "," : "", mag);
+        int written = snprintf(packet + offset,
+                               (size_t)(sizeof(packet) - offset),
+                               "%s%.4f", i > 0 ? "," : "", mag);
+        if (written < 0 || written >= (int)(sizeof(packet) - offset)) break;
+        offset += written;
     }
 
-    snprintf(packet + offset, sizeof(packet) - offset, "]}");
-
+    if (offset < (int)sizeof(packet) - 3) {
+        snprintf(packet + offset, (size_t)(sizeof(packet) - offset), "]}");
+    }
     /* Send UDP to Jetson/companion */
     sendto(udp_sock, packet, strlen(packet), 0,
            (struct sockaddr *)&dest_addr, sizeof(dest_addr));

@@ -121,10 +121,12 @@ class CsiPacket:
 class UdpReceiver(threading.Thread):
     """Listens on UDP_PORT for JSON CSI packets from all watch nodes."""
 
-    def __init__(self, packet_queue: queue.Queue, port: int = UDP_PORT):
+    def __init__(self, packet_queue: queue.Queue, port: int = UDP_PORT,
+                 host: str = ""):
         super().__init__(daemon=True, name="udp-receiver")
         self._queue   = packet_queue
         self._port    = port
+        self._host    = host
         self._running = False
 
     def run(self):
@@ -132,7 +134,11 @@ class UdpReceiver(threading.Thread):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.settimeout(1.0)
-            sock.bind(("0.0.0.0", self._port))
+            # Bind to all interfaces intentionally: CSI packets arrive from
+            # multiple watch nodes on the local network (LAN / WiFi).
+            # Users should restrict access via OS firewall rules if needed.
+            bind_host = self._host if self._host else "0.0.0.0"
+            sock.bind((bind_host, self._port))
             print(f"[UDP] Listening on :{self._port}")
             while self._running:
                 try:
@@ -296,7 +302,7 @@ class Recorder:
         if not HAS_NP:
             print("[Export] numpy not installed — skipping HDF5 export")
             return
-        import numpy as np
+        # np is imported at module level (conditional on HAS_NP); use it directly
         with h5py.File(path, "w") as f:
             n = len(self._history)
             mags   = np.array([p.magnitudes for p in self._history], dtype=np.float32)

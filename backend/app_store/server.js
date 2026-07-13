@@ -14,18 +14,19 @@
  *
  * Environment variables:
  *   PORT          — HTTP port (default 3000)
- *   ADMIN_TOKEN   — ****** for admin endpoints (default: change_me)
+ *   ADMIN_TOKEN   — Token for admin endpoints (default: change_me)
  *   STORE_VERSION — API version string (default: 1.0.0)
  */
 
 'use strict';
 
-const express  = require('express');
-const cors     = require('cors');
-const multer   = require('multer');
-const fs       = require('fs');
-const path     = require('path');
-const crypto   = require('crypto');
+const express      = require('express');
+const cors         = require('cors');
+const multer       = require('multer');
+const rateLimit    = require('express-rate-limit');
+const fs           = require('fs');
+const path         = require('path');
+const crypto       = require('crypto');
 
 const app = express();
 
@@ -43,12 +44,68 @@ const RATINGS_FILE  = path.join(APPS_DIR, 'ratings.json');
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 });
 
+// ── ID validation ─────────────────────────────────────────────────────────
+/**
+ * sanitizeId — allow only safe characters to prevent path traversal.
+ * Returns the validated id string, or null if invalid.
+ */
+function sanitizeId(id) {
+    if (!id || typeof id !== 'string') return null;
+    // Only alphanumerics, hyphens, underscores — no dots or slashes
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) return null;
+    return id;
+}
+
+/**
+ * safeBinPath — construct a binary file path and verify it is inside
+ * BINARIES_DIR to prevent directory traversal attacks.
+ * Returns the resolved path, or null if the path would escape the directory.
+ */
+function safeBinPath(id, version) {
+    const sId  = sanitizeId(id);
+    const sVer = sanitizeId(version);
+    if (!sId || !sVer) return null;
+    const resolved = path.resolve(BINARIES_DIR, `${sId}-${sVer}.bin`);
+    if (!resolved.startsWith(path.resolve(BINARIES_DIR) + path.sep)) return null;
+    return resolved;
+}
+
+// ── Rate limiting ─────────────────────────────────────────────────────────
+/** General API: 100 requests per 15-minute window per IP */
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' },
+});
+
+/** Download endpoint: 20 downloads per 15-minute window per IP */
+const downloadLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Download rate limit exceeded.' },
+});
+
+/** Admin endpoints: 10 requests per minute */
+const adminLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Admin rate limit exceeded.' },
+});
+
 // ── Multer (binary upload) ────────────────────────────────────────────────
 const storage = multer.diskStorage({
     destination: BINARIES_DIR,
     filename: (req, file, cb) => {
-        const id      = (req.body && req.body.id)      || 'unknown';
-        const version = (req.body && req.body.version) || '0.0.0';
+        const rawId      = (req.body && req.body.id)      || '';
+        const rawVersion = (req.body && req.body.version) || '';
+        const id      = sanitizeId(rawId)      || 'unknown';
+        const version = sanitizeId(rawVersion) || '0-0-0';
         cb(null, `${id}-${version}.bin`);
     },
 });
@@ -68,6 +125,7 @@ const upload = multer({
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
+app.use('/api/', apiLimiter);
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function loadManifest() {
@@ -141,8 +199,11 @@ app.get('/api/apps', (req, res) => {
  * Returns a single app's full metadata including download URL.
  */
 app.get('/api/apps/:id', (req, res) => {
-    const apps = loadManifest();
-    const found = apps.find(a => a.id === req.params.id);
+    const appId = sanitizeId(req.params.id);
+    if (!appId) return res.status(400).json({ error: 'Invalid app ID' });
+
+    const apps  = loadManifest();
+    const found = apps.find(a => a.id === appId);
     if (!found) return res.status(404).json({ error: 'App not found' });
 
     const ratings = loadRatings();
@@ -158,13 +219,16 @@ app.get('/api/apps/:id', (req, res) => {
  * GET /api/apps/:id/download
  * Streams the app binary to the client (watch or browser).
  */
-app.get('/api/apps/:id/download', (req, res) => {
+app.get('/api/apps/:id/download', downloadLimiter, (req, res) => {
+    const appId = sanitizeId(req.params.id);
+    if (!appId) return res.status(400).json({ error: 'Invalid app ID' });
+
     const apps  = loadManifest();
-    const found = apps.find(a => a.id === req.params.id);
+    const found = apps.find(a => a.id === appId);
     if (!found) return res.status(404).json({ error: 'App not found' });
 
-    const binPath = path.join(BINARIES_DIR, `${found.id}-${found.version}.bin`);
-    if (!fs.existsSync(binPath)) {
+    const binPath = safeBinPath(found.id, found.version);
+    if (!binPath || !fs.existsSync(binPath)) {
         return res.status(404).json({ error: 'Binary not available' });
     }
 
@@ -181,8 +245,11 @@ app.get('/api/apps/:id/download', (req, res) => {
  * Body: { "stars": 1-5 }
  */
 app.post('/api/apps/:id/rate', (req, res) => {
+    const appId = sanitizeId(req.params.id);
+    if (!appId) return res.status(400).json({ error: 'Invalid app ID' });
+
     const apps  = loadManifest();
-    const found = apps.find(a => a.id === req.params.id);
+    const found = apps.find(a => a.id === appId);
     if (!found) return res.status(404).json({ error: 'App not found' });
 
     const stars = parseInt(req.body.stars, 10);
@@ -191,14 +258,14 @@ app.post('/api/apps/:id/rate', (req, res) => {
     }
 
     const ratings = loadRatings();
-    if (!ratings[req.params.id]) {
-        ratings[req.params.id] = { total: 0, count: 0 };
+    if (!ratings[appId]) {
+        ratings[appId] = { total: 0, count: 0 };
     }
-    ratings[req.params.id].total += stars;
-    ratings[req.params.id].count += 1;
+    ratings[appId].total += stars;
+    ratings[appId].count += 1;
     saveRatings(ratings);
 
-    const avg = (ratings[req.params.id].total / ratings[req.params.id].count).toFixed(1);
+    const avg = (ratings[appId].total / ratings[appId].count).toFixed(1);
     res.json({ message: 'Rating submitted', average: avg });
 });
 
@@ -210,15 +277,17 @@ app.post('/api/apps/:id/rate', (req, res) => {
  *
  * Requires Authorization: ******
  */
-app.post('/admin/apps', requireAdmin, upload.single('binary'), (req, res) => {
+app.post('/admin/apps', adminLimiter, requireAdmin, upload.single('binary'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No binary uploaded' });
     }
-    const { id, name, version, description, author,
-            min_firmware_version, changelog } = req.body;
+    const { name, description, author, min_firmware_version, changelog } = req.body;
+    const id      = sanitizeId(req.body.id);
+    const version = sanitizeId(req.body.version);
+
     if (!id || !name || !version) {
         fs.unlinkSync(req.file.path);
-        return res.status(400).json({ error: 'id, name and version are required' });
+        return res.status(400).json({ error: 'id (alphanumeric/_/-), name and version are required' });
     }
 
     const binPath  = req.file.path;
@@ -246,9 +315,9 @@ app.post('/admin/apps', requireAdmin, upload.single('binary'), (req, res) => {
     const apps  = loadManifest();
     const idx   = apps.findIndex(a => a.id === id);
     if (idx >= 0) {
-        /* Update existing entry — remove old binary */
-        const oldBin = path.join(BINARIES_DIR, `${apps[idx].id}-${apps[idx].version}.bin`);
-        if (fs.existsSync(oldBin) && oldBin !== binPath) fs.unlinkSync(oldBin);
+        /* Update existing entry — remove old binary via safe path */
+        const oldBin = safeBinPath(apps[idx].id, apps[idx].version);
+        if (oldBin && fs.existsSync(oldBin) && oldBin !== binPath) fs.unlinkSync(oldBin);
         apps[idx] = newApp;
     } else {
         apps.push(newApp);
@@ -262,13 +331,16 @@ app.post('/admin/apps', requireAdmin, upload.single('binary'), (req, res) => {
  * DELETE /admin/apps/:id
  * Remove an app and its binary.
  */
-app.delete('/admin/apps/:id', requireAdmin, (req, res) => {
+app.delete('/admin/apps/:id', adminLimiter, requireAdmin, (req, res) => {
+    const appId = sanitizeId(req.params.id);
+    if (!appId) return res.status(400).json({ error: 'Invalid app ID' });
+
     const apps  = loadManifest();
-    const idx   = apps.findIndex(a => a.id === req.params.id);
+    const idx   = apps.findIndex(a => a.id === appId);
     if (idx < 0) return res.status(404).json({ error: 'App not found' });
 
-    const binPath = path.join(BINARIES_DIR, `${apps[idx].id}-${apps[idx].version}.bin`);
-    if (fs.existsSync(binPath)) fs.unlinkSync(binPath);
+    const binPath = safeBinPath(apps[idx].id, apps[idx].version);
+    if (binPath && fs.existsSync(binPath)) fs.unlinkSync(binPath);
 
     apps.splice(idx, 1);
     saveManifest(apps);
