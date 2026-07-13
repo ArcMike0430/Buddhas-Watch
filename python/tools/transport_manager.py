@@ -27,6 +27,7 @@ class TransportManager:
     def __init__(self, priority: Sequence[str] = ("udp", "ble", "serial")):
         self.priority = tuple(priority)
         self.active_transport: str = "none"
+        self._udp_socket: Optional[socket.socket] = None
 
     def select_transport(self, availability: TransportAvailability) -> str:
         for name in self.priority:
@@ -54,16 +55,43 @@ class TransportManager:
             return False
 
         if self.active_transport == "udp" and udp_target:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.sendto(payload, udp_target)
+            try:
+                if self._udp_socket is None:
+                    self._udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self._udp_socket.sendto(payload, udp_target)
                 return True
+            except OSError:
+                return False
 
         if self.active_transport == "ble" and ble_sender:
-            ble_sender(payload)
-            return True
+            try:
+                ble_sender(payload)
+                return True
+            except Exception:
+                return False
 
         if self.active_transport == "serial" and serial_writer:
-            serial_writer(payload)
-            return True
+            try:
+                serial_writer(payload)
+                return True
+            except Exception:
+                return False
 
         return False
+
+    def close(self):
+        if self._udp_socket is not None:
+            self._udp_socket.close()
+            self._udp_socket = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass

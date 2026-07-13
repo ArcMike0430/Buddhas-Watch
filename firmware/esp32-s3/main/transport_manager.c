@@ -1,16 +1,25 @@
 #include <string.h>
+#include <unistd.h>
 #include "transport_manager.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 
 static const char *TAG = "TRANSPORT";
+#define MAX_TRANSPORT_ATTEMPTS 3
 
 static transport_type_t s_active_transport = TRANSPORT_NONE;
 static int s_udp_sock = -1;
 static struct sockaddr_in s_udp_addr = {0};
+static bool s_ble_available = false;
+static bool s_usb_available = false;
 
 static esp_err_t init_udp(const transport_config_t *config) {
+    if (s_udp_sock >= 0) {
+        close(s_udp_sock);
+        s_udp_sock = -1;
+    }
+
     s_udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s_udp_sock < 0) {
         ESP_LOGE(TAG, "UDP socket creation failed");
@@ -27,6 +36,9 @@ esp_err_t transport_manager_init(const transport_config_t *config) {
     if (!config) {
         return ESP_ERR_INVALID_ARG;
     }
+
+    s_ble_available = config->ble_available;
+    s_usb_available = config->usb_available;
 
     if (config->wifi_available) {
         if (init_udp(config) == ESP_OK) {
@@ -66,24 +78,45 @@ esp_err_t transport_send_csi(const char *payload, size_t len) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    switch (s_active_transport) {
-        case TRANSPORT_UDP:
-            if (s_udp_sock < 0) {
-                return ESP_FAIL;
-            }
-            if (sendto(s_udp_sock, payload, len, 0, (struct sockaddr *)&s_udp_addr, sizeof(s_udp_addr)) < 0) {
-                ESP_LOGW(TAG, "UDP send failed; waiting for fallback");
-                return ESP_FAIL;
-            }
-            return ESP_OK;
-        case TRANSPORT_BLE:
-            ESP_LOGI(TAG, "BLE transport selected (packet len=%u)", (unsigned)len);
-            return ESP_OK;
-        case TRANSPORT_USB_CDC:
-            ESP_LOGI(TAG, "USB CDC transport selected (packet len=%u)", (unsigned)len);
-            return ESP_OK;
-        case TRANSPORT_NONE:
-        default:
-            return ESP_FAIL;
+    transport_type_t attempts[MAX_TRANSPORT_ATTEMPTS];
+    for (int i = 0; i < MAX_TRANSPORT_ATTEMPTS; i++) {
+        attempts[i] = TRANSPORT_NONE;
     }
+    int attempt_count = 0;
+    attempts[attempt_count++] = s_active_transport;
+    if (s_active_transport != TRANSPORT_UDP && attempt_count < MAX_TRANSPORT_ATTEMPTS) {
+        attempts[attempt_count++] = TRANSPORT_UDP;
+    }
+    if (s_ble_available && s_active_transport != TRANSPORT_BLE && attempt_count < MAX_TRANSPORT_ATTEMPTS) {
+        attempts[attempt_count++] = TRANSPORT_BLE;
+    }
+    if (s_usb_available && s_active_transport != TRANSPORT_USB_CDC && attempt_count < MAX_TRANSPORT_ATTEMPTS) {
+        attempts[attempt_count++] = TRANSPORT_USB_CDC;
+    }
+
+    for (int i = 0; i < attempt_count; i++) {
+        switch (attempts[i]) {
+            case TRANSPORT_UDP:
+                if (s_udp_sock < 0) {
+                    continue;
+                }
+                if (sendto(s_udp_sock, payload, len, 0, (struct sockaddr *)&s_udp_addr, sizeof(s_udp_addr)) >= 0) {
+                    s_active_transport = TRANSPORT_UDP;
+                    return ESP_OK;
+                }
+                ESP_LOGW(TAG, "UDP send failed");
+                break;
+            case TRANSPORT_BLE:
+                ESP_LOGW(TAG, "BLE fallback unavailable (not implemented)");
+                break;
+            case TRANSPORT_USB_CDC:
+                ESP_LOGW(TAG, "USB CDC fallback unavailable (not implemented)");
+                break;
+            case TRANSPORT_NONE:
+            default:
+                break;
+        }
+    }
+
+    return ESP_ERR_NOT_SUPPORTED;
 }

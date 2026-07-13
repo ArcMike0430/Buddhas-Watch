@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -19,6 +20,7 @@
 #include "nvs_flash.h"
 #include "esp_timer.h"
 #include "config.h"
+#include "cmd_receiver.h"
 #include "transport_manager.h"
 #include "lwip/err.h"
 
@@ -28,7 +30,6 @@
 
 static const char *TAG = "CSI_WATCH";
 static EventGroupHandle_t wifi_event_group;
-extern void start_cmd_receiver(void);
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     (void)arg;
@@ -70,10 +71,7 @@ static void wifi_csi_cb(void *ctx, wifi_csi_info_t *data) {
 
     snprintf(packet + offset, sizeof(packet) - offset, "]}");
 
-    if (transport_send_csi(packet, strlen(packet)) != ESP_OK &&
-        transport_manager_active() == TRANSPORT_UDP) {
-        transport_manager_set_active(TRANSPORT_BLE);
-    }
+    (void)transport_send_csi(packet, strlen(packet));
 }
 
 // Enable CSI capture
@@ -126,12 +124,30 @@ void app_main(void) {
     ESP_LOGI(TAG, "Wi-Fi connecting to %s...", DEFAULT_WIFI_SSID);
 
     // Wait for connection
-    xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, pdFALSE, pdFALSE, pdMS_TO_TICKS(8000));
+    EventBits_t wifi_bits = xEventGroupWaitBits(
+        wifi_event_group,
+        WIFI_CONNECTED_BIT,
+        pdFALSE,
+        pdFALSE,
+        pdMS_TO_TICKS(8000)
+    );
+
+    bool wifi_available = (wifi_bits & WIFI_CONNECTED_BIT) != 0;
+#ifdef CONFIG_BT_ENABLED
+    bool ble_available = true;
+#else
+    bool ble_available = false;
+#endif
+#ifdef CONFIG_TINYUSB_CDC_ENABLED
+    bool usb_available = true;
+#else
+    bool usb_available = false;
+#endif
 
     transport_config_t transport_config = {
-        .wifi_available = true,
-        .ble_available = true,
-        .usb_available = true,
+        .wifi_available = wifi_available,
+        .ble_available = ble_available,
+        .usb_available = usb_available,
         .jetson_ip = DEFAULT_JETSON_IP,
         .udp_port = UDP_PORT
     };

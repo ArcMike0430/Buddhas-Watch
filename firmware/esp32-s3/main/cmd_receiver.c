@@ -25,6 +25,7 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "cJSON.h"
+#include "cmd_receiver.h"
 
 #define CMD_PORT        5501
 #define CMD_BUFFER_SIZE 1024
