@@ -1,0 +1,18 @@
+# Buddhas-Watch Desktop Companion — Python dependencies
+
+# Core (required)
+# tkinter is included with Python on all platforms
+
+# Visualization
+matplotlib>=3.7.0
+
+# BLE support (optional — needed for --ble mode)
+bleak>=0.21.0
+
+# Numerical analysis (optional)
+numpy>=1.24.0
+
+# HDF5 export (optional)
+h5py>=3.9.0
+
+# JSON (stdlib — no extra package needed)

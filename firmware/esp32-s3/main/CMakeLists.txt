@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "cmd_receiver.c"
+        "settings_app.c"
+        "wifi_csi_app.c"
+        "ble_csi_app.c"
+        "app_manager.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        nvs_flash
+        esp_wifi
+        esp_event
+        esp_netif
+        bt
+        driver
+        fatfs
+        json
+        lwip
+        esp_timer
+        freertos
+)

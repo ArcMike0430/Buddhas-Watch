@@ -1,0 +1,44 @@
+[
+  {
+    "id": "wifi_csi_v1",
+    "name": "WiFi CSI Capture",
+    "version": "1.0.0",
+    "description": "Real-time WiFi CSI capture with live heatmap display and UDP streaming to Jetson/laptop/Android nodes.",
+    "author": "Buddhas-Watch",
+    "icon_url": "/icons/wifi_csi_v1.png",
+    "binary_url": "/api/apps/wifi_csi_v1/download",
+    "size_bytes": 0,
+    "checksum": "sha256:placeholder",
+    "min_firmware_version": "1.0.0",
+    "release_date": "2026-07-13",
+    "changelog": "Initial release"
+  },
+  {
+    "id": "ble_csi_v1",
+    "name": "BLE CSI Stream",
+    "version": "1.0.0",
+    "description": "Stream CSI data over Bluetooth LE to Android/desktop companion apps. GATT service with metadata and data characteristics.",
+    "author": "Buddhas-Watch",
+    "icon_url": "/icons/ble_csi_v1.png",
+    "binary_url": "/api/apps/ble_csi_v1/download",
+    "size_bytes": 0,
+    "checksum": "sha256:placeholder",
+    "min_firmware_version": "1.0.0",
+    "release_date": "2026-07-13",
+    "changelog": "Initial release"
+  },
+  {
+    "id": "settings_v1",
+    "name": "Settings",
+    "version": "1.0.0",
+    "description": "Device configuration: WiFi credentials, BLE toggle, display brightness, logging preferences and node ID.",
+    "author": "Buddhas-Watch",
+    "icon_url": "/icons/settings_v1.png",
+    "binary_url": "/api/apps/settings_v1/download",
+    "size_bytes": 0,
+    "checksum": "sha256:placeholder",
+    "min_firmware_version": "1.0.0",
+    "release_date": "2026-07-13",
+    "changelog": "Initial release"
+  }
+]
