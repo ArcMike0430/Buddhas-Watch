@@ -1,0 +1,11 @@
+# Buddhas-Watch custom partition table
+# 32 MB flash layout for ESP32-S3
+# https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-guides/partition-tables.html
+#
+# Name,   Type, SubType,  Offset,   Size,   Flags
+nvs,      data, nvs,      0x9000,   0x6000,
+phy_init, data, phy,      0xF000,   0x1000,
+factory,  app,  factory,  0x10000,  1600K,
+ota_0,    app,  ota_0,    0x1A0000, 1600K,
+ota_1,    app,  ota_1,    0x330000, 1600K,
+storage,  data, fat,      0x4C0000, 0xB40000,

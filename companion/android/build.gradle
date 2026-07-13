@@ -1,0 +1,6 @@
+// Top-level build file — Android companion app for Buddhas-Watch
+// Distribution: Google Play Store
+
+plugins {
+    id 'com.android.application' version '8.1.0' apply false
+}
