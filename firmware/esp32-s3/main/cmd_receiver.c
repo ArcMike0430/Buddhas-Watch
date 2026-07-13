@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -24,6 +25,7 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "cJSON.h"
+#include "cmd_receiver.h"
 
 #define CMD_PORT        5501
 #define CMD_BUFFER_SIZE 1024
@@ -57,7 +59,7 @@ static void handle_command(const char *json_str) {
         return;
     }
 
-    const char *command = cmd->cJSON_IsString(cmd) ? cmd->valuestring : "";
+    const char *command = cJSON_IsString(cmd) ? cmd->valuestring : "";
 
     // Extract common params
     float freq = 0;

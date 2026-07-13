@@ -8,30 +8,45 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_netif.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "esp_timer.h"
+#include "config.h"
+#include "cmd_receiver.h"
+#include "transport_manager.h"
 #include "lwip/err.h"
-#include "lwip/sockets.h"
-#include "lwip/netdb.h"
 
-#define WIFI_SSID         "Buddhas-Net"
-#define WIFI_PASS         "your_password"
-#define JETSON_IP         "192.168.1.100"
 #define UDP_PORT          5500
 #define NODE_ID           "watch_left"
+#define WIFI_CONNECTED_BIT BIT0
 
 static const char *TAG = "CSI_WATCH";
-static int udp_sock = -1;
-static struct sockaddr_in dest_addr;
+static EventGroupHandle_t wifi_event_group;
+
+static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
+    (void)arg;
+    (void)event_data;
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+        esp_wifi_connect();
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+}
 
 // CSI callback — fires on each received packet
 static void wifi_csi_cb(void *ctx, wifi_csi_info_t *data) {
-    if (!data || !data->buf || udp_sock < 0) return;
+    if (!data || !data->buf) return;
 
     // Build JSON packet
     char packet[2048];
@@ -56,9 +71,7 @@ static void wifi_csi_cb(void *ctx, wifi_csi_info_t *data) {
 
     snprintf(packet + offset, sizeof(packet) - offset, "]}");
 
-    // Send UDP
-    sendto(udp_sock, packet, strlen(packet), 0,
-           (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    (void)transport_send_csi(packet, strlen(packet));
 }
 
 // Enable CSI capture
@@ -95,31 +108,54 @@ void app_main(void) {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+    wifi_event_group = xEventGroupCreate();
 
     wifi_config_t wifi_config = {
         .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
+            .ssid = DEFAULT_WIFI_SSID,
+            .password = DEFAULT_WIFI_PASS,
         },
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "Wi-Fi connecting to %s...", WIFI_SSID);
+    ESP_LOGI(TAG, "Wi-Fi connecting to %s...", DEFAULT_WIFI_SSID);
 
     // Wait for connection
-    wifi_event_group = xEventGroupCreate();
-    // ... connection handling ...
+    EventBits_t wifi_bits = xEventGroupWaitBits(
+        wifi_event_group,
+        WIFI_CONNECTED_BIT,
+        pdFALSE,
+        pdFALSE,
+        pdMS_TO_TICKS(8000)
+    );
 
-    // Set up UDP socket
-    udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(UDP_PORT);
-    inet_aton(JETSON_IP, &dest_addr.sin_addr);
-    ESP_LOGI(TAG, "UDP target: %s:%d", JETSON_IP, UDP_PORT);
+    bool wifi_available = (wifi_bits & WIFI_CONNECTED_BIT) != 0;
+#ifdef CONFIG_BT_ENABLED
+    bool ble_available = true;
+#else
+    bool ble_available = false;
+#endif
+#ifdef CONFIG_TINYUSB_CDC_ENABLED
+    bool usb_available = true;
+#else
+    bool usb_available = false;
+#endif
+
+    transport_config_t transport_config = {
+        .wifi_available = wifi_available,
+        .ble_available = ble_available,
+        .usb_available = usb_available,
+        .jetson_ip = DEFAULT_JETSON_IP,
+        .udp_port = UDP_PORT
+    };
+    ESP_ERROR_CHECK(transport_manager_init(&transport_config));
 
     // Enable CSI capture
     enable_csi();
+    start_cmd_receiver();
 
     ESP_LOGI(TAG, "Buddhas-Watch CSI node ready");
 }
