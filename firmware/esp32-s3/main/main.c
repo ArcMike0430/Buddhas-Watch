@@ -8,9 +8,12 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "esp_system.h"
+#include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -28,6 +31,24 @@
 static const char *TAG = "CSI_WATCH";
 static int udp_sock = -1;
 static struct sockaddr_in dest_addr;
+static EventGroupHandle_t wifi_event_group;
+
+#define WIFI_CONNECTED_BIT BIT0
+
+extern void start_cmd_receiver(void);
+
+// Wi-Fi event handler
+static void wifi_event_handler(void *arg, esp_event_base_t event_base,
+                               int32_t event_id, void *event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        esp_wifi_connect();
+        ESP_LOGI(TAG, "Wi-Fi disconnected, retrying...");
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+    }
+}
 
 // CSI callback — fires on each received packet
 static void wifi_csi_cb(void *ctx, wifi_csi_info_t *data) {
@@ -49,7 +70,7 @@ static void wifi_csi_cb(void *ctx, wifi_csi_info_t *data) {
 
     // Append phase values for all subcarriers
     for (int i = 0; i < data->len && offset < 2000; i++) {
-        float phase = data->buf[i].real + data->buf[i].imag * 1.0f;
+        float phase = atan2f((float)data->buf[i].imag, (float)data->buf[i].real);
         offset += snprintf(packet + offset, sizeof(packet) - offset,
             "%s%.2f", i > 0 ? "," : "", phase);
     }
@@ -104,12 +125,21 @@ void app_main(void) {
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+
+    wifi_event_group = xEventGroupCreate();
+    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                               &wifi_event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                               &wifi_event_handler, NULL));
+
     ESP_ERROR_CHECK(esp_wifi_start());
+    esp_wifi_connect();
     ESP_LOGI(TAG, "Wi-Fi connecting to %s...", WIFI_SSID);
 
-    // Wait for connection
-    wifi_event_group = xEventGroupCreate();
-    // ... connection handling ...
+    // Wait for IP address
+    xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT,
+                        false, true, portMAX_DELAY);
+    ESP_LOGI(TAG, "Wi-Fi connected");
 
     // Set up UDP socket
     udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -117,6 +147,9 @@ void app_main(void) {
     dest_addr.sin_port = htons(UDP_PORT);
     inet_aton(JETSON_IP, &dest_addr.sin_addr);
     ESP_LOGI(TAG, "UDP target: %s:%d", JETSON_IP, UDP_PORT);
+
+    // Start command receiver
+    start_cmd_receiver();
 
     // Enable CSI capture
     enable_csi();

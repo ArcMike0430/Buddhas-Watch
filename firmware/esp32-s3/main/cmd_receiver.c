@@ -14,6 +14,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -31,14 +32,31 @@
 static const char *TAG = "CMD_RX";
 static int cmd_sock = -1;
 
-// Forward declarations of hardware control functions
-// (implemented elsewhere in your firmware)
-extern void display_show_alert(const char *severity, float freq);
-extern void vibrator_pulse(int duration_ms);
-extern void led_flash_pattern(const char *pattern);
-extern void wifi_transmit_noise(float freq_mhz, int duration_ms);
-extern void wifi_lock_channel(int channel);
-extern void sdcard_write_log_marker(const char *event, const char *json_details);
+// Hardware control stub implementations
+void display_show_alert(const char *severity, float freq) {
+    ESP_LOGI(TAG, "DISPLAY: alert severity=%s freq=%.0f", severity, freq);
+}
+
+void vibrator_pulse(int duration_ms) {
+    ESP_LOGI(TAG, "VIBRATOR: pulse %d ms", duration_ms);
+}
+
+void led_flash_pattern(const char *pattern) {
+    ESP_LOGI(TAG, "LED: flash pattern=%s", pattern);
+}
+
+void wifi_transmit_noise(float freq_mhz, int duration_ms) {
+    ESP_LOGI(TAG, "RF: transmit noise at %.0f MHz for %d ms", freq_mhz, duration_ms);
+}
+
+void wifi_lock_channel(int channel) {
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    ESP_LOGI(TAG, "WIFI: locked to channel %d", channel);
+}
+
+void sdcard_write_log_marker(const char *event, const char *json_details) {
+    ESP_LOGI(TAG, "SDCARD: log_marker event=%s details=%s", event, json_details);
+}
 
 /**
  * Handle an incoming counter-measure command.
@@ -57,7 +75,7 @@ static void handle_command(const char *json_str) {
         return;
     }
 
-    const char *command = cmd->cJSON_IsString(cmd) ? cmd->valuestring : "";
+    const char *command = cmd->valuestring;
 
     // Extract common params
     float freq = 0;
@@ -96,13 +114,17 @@ static void handle_command(const char *json_str) {
         if (details_str) free(details_str);
     }
     else if (strcmp(command, "sweep") == 0) {
-        // Frequency sweep
+        // Frequency sweep: map MHz range to 2.4 GHz Wi-Fi channels 1-13
+        // Channel n is centred at (2407 + 5*n) MHz
         cJSON *start = params ? cJSON_GetObjectItem(params, "start_mhz") : NULL;
         cJSON *end = params ? cJSON_GetObjectItem(params, "end_mhz") : NULL;
-        float s = start ? start->valuedouble : 2400;
-        float e = end ? end->valuedouble : 2500;
-        // Implement sweep: step through channels
-        for (int ch = (int)s; ch <= (int)e; ch++) {
+        float s = start ? (float)start->valuedouble : 2400.0f;
+        float e = end   ? (float)end->valuedouble   : 2500.0f;
+        int ch_start = (int)roundf((s - 2407.0f) / 5.0f);
+        int ch_end   = (int)roundf((e - 2407.0f) / 5.0f);
+        if (ch_start < 1)  ch_start = 1;
+        if (ch_end   > 13) ch_end   = 13;
+        for (int ch = ch_start; ch <= ch_end; ch++) {
             wifi_lock_channel(ch);
             vTaskDelay(pdMS_TO_TICKS(10));
         }
