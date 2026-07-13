@@ -130,7 +130,10 @@ bool imu_motion_detected(float threshold_g, int motion_window_ms)
 
     for (int i = start; i < motion_buf_idx && i < start + samples; i++) {
         float mag = motion_mag_buf[i % MOTION_BUF_LEN];
-        /* Subtract 1g gravity component (static baseline) */
+        /* 1.0g is the standard gravity baseline for a stationary, upright-worn device.
+         * This assumption holds for wrist-worn operation; if the watch is placed flat
+         * or inverted, the effective resting magnitude remains ~1g regardless of
+         * orientation because we compare the scalar magnitude, not a single axis. */
         if (fabsf(mag - 1.0f) > threshold_g) return true;
     }
     return false;

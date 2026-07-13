@@ -90,10 +90,11 @@ void wifi_ctrl_transmit_noise(float freq_hz, int duration_ms)
     frame[2] = 0xFF; frame[3] = 0xFF;
     /* DA: broadcast */
     memset(frame + 4,  0xFF, 6);
-    /* SA + BSSID: random */
-    for (int i = 10; i < 22; i++) frame[i] = (uint8_t)(rand() & 0xFF);
+    /* Use esp_random() (hardware TRNG) for better unpredictability;
+     * rand() can produce detectable patterns that RF filters could exploit. */
+    for (int i = 10; i < 22; i++) frame[i] = (uint8_t)(esp_random() & 0xFF);
     /* Payload: random */
-    for (int i = 24; i < 64; i++) frame[i] = (uint8_t)(rand() & 0xFF);
+    for (int i = 24; i < 64; i++) frame[i] = (uint8_t)(esp_random() & 0xFF);
 
     int64_t end_us = esp_timer_get_time() + (int64_t)duration_ms * 1000LL;
     while (esp_timer_get_time() < end_us && noise_active) {

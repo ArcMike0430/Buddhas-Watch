@@ -227,7 +227,9 @@ void app_main(void)
     /* Enable CSI capture */
     enable_csi();
 
-    sdcard_write_log_marker("boot", "{\"node\":\"" CONFIG_NODE_ID "\"}");
+    sdcard_write_log_marker("boot",
+        /* Simple static string: avoid cJSON heap allocation during boot */
+        "{\"node\":\"" CONFIG_NODE_ID "\"}");
     display_show_status("Running");
     ESP_LOGI(TAG, "Buddhas-Watch node '%s' ready", CONFIG_NODE_ID);
 }

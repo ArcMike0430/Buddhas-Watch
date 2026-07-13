@@ -79,10 +79,15 @@ void power_get_status(power_status_t *out)
                        | axp_read(REG_VBAT_L);
     out->voltage_v = vbat_raw * 0.0011f;
 
-    /* Battery current: 13-bit signed ADC, LSB = 1 mA */
+    /* Battery current: 13-bit signed ADC, LSB = 1 mA
+     * Bit 12 is the sign bit of the 13-bit value:
+     *   IBAT_SIGN_BIT      = 0x1000  (bit 12 set → negative / discharging)
+     *   IBAT_SIGN_EXT_MASK = 0xE000  (bits 15-13 set to extend sign to int16_t) */
+    #define IBAT_SIGN_BIT      0x1000
+    #define IBAT_SIGN_EXT_MASK 0xE000
     int16_t ibat_raw = (int16_t)(((uint16_t)(axp_read(REG_IBAT_H) & 0x1F) << 8)
                                  | axp_read(REG_IBAT_L));
-    if (ibat_raw & 0x1000) ibat_raw |= 0xE000;  /* sign-extend 13-bit */
+    if (ibat_raw & IBAT_SIGN_BIT) ibat_raw |= IBAT_SIGN_EXT_MASK;
     out->current_ma = (float)ibat_raw;
 
     /* State of charge */

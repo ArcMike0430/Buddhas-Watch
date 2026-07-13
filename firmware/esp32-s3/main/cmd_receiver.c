@@ -98,13 +98,19 @@ static void handle_command(const char *json_str)
         /* Sweep across Wi-Fi channels 1–13 covering 2.4 GHz band.
          * start_mhz / end_mhz map to 2412 MHz (ch 1) … 2472 MHz (ch 13).
          * Channel = (freq_mhz - 2412) / 5 + 1, clamped to [1, 13]. */
+        /* 2.4 GHz channel mapping constants (shared with wifi_ctrl component):
+         *   Channel 1 = 2412 MHz, channel spacing = 5 MHz
+         *   Channel = (freq_mhz - WIFI_CH1_FREQ_MHZ) / WIFI_CHANNEL_SPACING_MHZ + 1 */
+        #define WIFI_CH1_FREQ_MHZ        2412.0f
+        #define WIFI_CHANNEL_SPACING_MHZ    5.0f
+
         cJSON *start_item = params ? cJSON_GetObjectItem(params, "start_mhz") : NULL;
         cJSON *end_item   = params ? cJSON_GetObjectItem(params, "end_mhz")   : NULL;
         float start_mhz   = (start_item && cJSON_IsNumber(start_item)) ? (float)start_item->valuedouble : 2412.0f;
         float end_mhz     = (end_item   && cJSON_IsNumber(end_item))   ? (float)end_item->valuedouble   : 2472.0f;
 
-        int ch_start = (int)((start_mhz - 2412.0f) / 5.0f) + 1;
-        int ch_end   = (int)((end_mhz   - 2412.0f) / 5.0f) + 1;
+        int ch_start = (int)((start_mhz - WIFI_CH1_FREQ_MHZ) / WIFI_CHANNEL_SPACING_MHZ) + 1;
+        int ch_end   = (int)((end_mhz   - WIFI_CH1_FREQ_MHZ) / WIFI_CHANNEL_SPACING_MHZ) + 1;
         if (ch_start < 1)  ch_start = 1;
         if (ch_end   > 13) ch_end   = 13;
         if (ch_start > ch_end) ch_start = ch_end;

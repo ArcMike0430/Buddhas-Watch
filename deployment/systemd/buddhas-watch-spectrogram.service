@@ -1,0 +1,22 @@
+[Unit]
+Description=Buddhas-Watch Spectrogram Monitor
+Documentation=https://github.com/ArcMike0430/Buddhas-Watch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=buddhas
+Group=buddhas
+WorkingDirectory=/opt/buddhas-watch/python/csi_monitor
+ExecStart=/usr/bin/python3 /opt/buddhas-watch/python/csi_monitor/csi_spectrogram_monitor.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=buddhas-watch-spectrogram
+
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
