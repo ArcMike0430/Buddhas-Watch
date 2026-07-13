@@ -12,13 +12,14 @@ import json
 import socket
 from typing import Dict, List, Optional, Tuple
 
+BUFFER_SIZE = 4096
+
 
 def extract_phase_samples(packet: Dict) -> List[float]:
     """Normalize CSI phase payload from packet variants."""
-    if "phases" in packet:
-        raw = packet["phases"]
-    else:
-        raw = packet.get("phase", [])
+    raw = packet.get("phases")
+    if raw is None:
+        raw = packet.get("phase")
 
     if isinstance(raw, (int, float)):
         raw = [raw]
@@ -40,7 +41,7 @@ class CSITransportManager:
     def __init__(
         self,
         transport: str = "wifi",
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         udp_port: int = 5500,
         ble_port: int = 5502,
         serial_port: str = "/dev/ttyUSB0",
@@ -58,6 +59,7 @@ class CSITransportManager:
         self._udp_sock: Optional[socket.socket] = None
         self._ble_server: Optional[socket.socket] = None
         self._ble_client: Optional[socket.socket] = None
+        self._ble_recv_buffer: bytes = b""
         self._serial = None
 
     def open(self):
@@ -85,7 +87,9 @@ class CSITransportManager:
             self._serial = serial.Serial(self.serial_port, self.serial_baudrate, timeout=self.timeout)
             return
 
-        raise ValueError(f"Unsupported transport '{self.transport}'. Use wifi, ble, or cable.")
+        raise ValueError(
+            f"Unsupported transport '{self.transport}'. Supported values are: 'wifi', 'ble', 'cable'."
+        )
 
     def close(self):
         if self._udp_sock:
@@ -103,33 +107,48 @@ class CSITransportManager:
 
     def _decode_packet(self, payload: bytes) -> Optional[Dict]:
         try:
-            packet = json.loads(payload.decode("utf-8").strip())
-            if not isinstance(packet, dict):
+            decoded = json.loads(payload.decode("utf-8").strip())
+            if not isinstance(decoded, dict):
                 return None
-            packet.setdefault("node_id", "unknown")
+            packet = decoded
+            packet.setdefault("node_id", "unspecified")
             packet["phases"] = extract_phase_samples(packet)
             return packet
         except (UnicodeDecodeError, json.JSONDecodeError):
             return None
 
     def receive_packet(self) -> Tuple[Optional[Dict], Optional[str]]:
-        """Receive one normalized packet and source identifier."""
+        """
+        Receive one normalized packet and source identifier.
+
+        May raise socket.timeout for Wi-Fi or BLE transports when no packet arrives
+        before the configured timeout.
+        """
         if self.transport == "wifi" and self._udp_sock:
-            data, addr = self._udp_sock.recvfrom(4096)
+            data, addr = self._udp_sock.recvfrom(BUFFER_SIZE)
             return self._decode_packet(data), addr[0]
 
         if self.transport == "ble" and self._ble_server:
             if self._ble_client is None:
                 self._ble_client, addr = self._ble_server.accept()
                 self._ble_client.settimeout(self.timeout)
+                self._ble_recv_buffer = b""
                 return None, addr[0]
-            data = self._ble_client.recv(4096)
+            if b"\n" in self._ble_recv_buffer:
+                line, self._ble_recv_buffer = self._ble_recv_buffer.split(b"\n", 1)
+                return self._decode_packet(line), "ble-client"
+
+            data = self._ble_client.recv(BUFFER_SIZE)
             if not data:
                 self._ble_client.close()
                 self._ble_client = None
+                self._ble_recv_buffer = b""
                 return None, None
-            first_line = data.splitlines()[0] if data.splitlines() else data
-            return self._decode_packet(first_line), "ble-client"
+            self._ble_recv_buffer += data
+            if b"\n" in self._ble_recv_buffer:
+                line, self._ble_recv_buffer = self._ble_recv_buffer.split(b"\n", 1)
+                return self._decode_packet(line), "ble-client"
+            return None, "ble-client"
 
         if self.transport == "cable" and self._serial:
             line = self._serial.readline()

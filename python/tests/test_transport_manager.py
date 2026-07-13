@@ -11,6 +11,7 @@ class TransportManagerTests(unittest.TestCase):
         self.assertEqual(extract_phase_samples({"phase": 1.25}), [1.25])
         self.assertEqual(extract_phase_samples({"phase": [1, "2.5", "bad"]}), [1.0, 2.5])
         self.assertEqual(extract_phase_samples({"phases": [0.1, 0.2]}), [0.1, 0.2])
+        self.assertEqual(extract_phase_samples({"phase": ["bad", "worse"]}), [])
 
     def test_wifi_transport_receives_and_normalizes_packet(self):
         rx = CSITransportManager(transport="wifi", udp_port=0, timeout=1.0)
@@ -32,6 +33,7 @@ class TransportManagerTests(unittest.TestCase):
             self.assertEqual(source, "127.0.0.1")
             self.assertEqual(packet["node_id"], "watch_left")
             self.assertEqual(packet["phases"], [1.0, 2.0, 3.0])
+            th.join(timeout=1.0)
         finally:
             rx.close()
 

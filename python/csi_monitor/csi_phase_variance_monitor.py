@@ -14,10 +14,14 @@ import time
 import os
 import logging
 from typing import Optional, Callable
-from transport_manager import CSITransportManager, extract_phase_samples
+
+try:
+    from python.csi_monitor.transport_manager import CSITransportManager, extract_phase_samples
+except ModuleNotFoundError:
+    from transport_manager import CSITransportManager, extract_phase_samples
 
 # ====================== CONFIGURATION ======================
-UDP_IP = "0.0.0.0"
+BIND_HOST = os.getenv("CSI_BIND_HOST", "127.0.0.1")
 UDP_PORT = 5500                    # Match your ESP32 sender
 WINDOW_SIZE = 256                  # ~1-2 seconds depending on CSI rate
 STEP_SIZE = 128                    # 50% overlap
@@ -127,7 +131,7 @@ def example_udp_listener():
 
     transport = CSITransportManager(
         transport=os.getenv("CSI_INPUT_TRANSPORT", "wifi"),
-        host=UDP_IP,
+        host=BIND_HOST,
         udp_port=UDP_PORT,
         timeout=1.0,
     )
@@ -146,7 +150,8 @@ def example_udp_listener():
                     continue
                 freq = packet.get('frequency', None)
                 for phase in phases:
-                    variance = monitor.process_sample(phase, freq)
+                    # process_sample still computes internal variance/detection state; we only rely on on_detection callbacks.
+                    _ = monitor.process_sample(phase, freq)
             except socket.timeout:
                 continue
     except KeyboardInterrupt:
