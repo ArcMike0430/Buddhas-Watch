@@ -58,7 +58,11 @@ static void handle_command(const char *json_str) {
         return;
     }
 
-    const char *command = cmd->valuestring;
+    const char *command = cJSON_GetStringValue(cmd);
+    if (!command) {
+        cJSON_Delete(root);
+        return;
+    }
 
     // Extract common params
     float freq = 0;

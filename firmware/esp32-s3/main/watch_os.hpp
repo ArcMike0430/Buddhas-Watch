@@ -17,7 +17,6 @@ struct NetworkInfo {
 
 struct KnownNetwork {
     std::string ssid;
-    std::string password_hash;
 };
 
 enum class Theme {
@@ -68,6 +67,10 @@ public:
     void set_theme(Theme theme);
     void toggle_aod();
     void save_display_prefs();
+    uint8_t brightness() const { return brightness_; }
+    uint16_t screen_timeout_ms() const { return screen_timeout_ms_; }
+    Theme theme() const { return theme_; }
+    bool aod_enabled() const { return aod_enabled_; }
 
 private:
     uint8_t brightness_ = 80;
@@ -86,6 +89,10 @@ public:
     void test_notification_sound();
     void test_vibration_pattern();
     void save_audio_prefs();
+    uint8_t ringtone_volume() const { return ringtone_volume_; }
+    uint8_t media_volume() const { return media_volume_; }
+    bool vibration_enabled() const { return vibration_enabled_; }
+    VibroIntensity vibration_intensity() const { return vibration_intensity_; }
 
 private:
     uint8_t ringtone_volume_ = 70;
@@ -103,6 +110,8 @@ public:
     void show_battery_stats();
     uint32_t estimate_remaining_time();
     void save_power_prefs();
+    uint16_t sleep_timeout_seconds() const { return sleep_timeout_seconds_; }
+    bool deep_sleep_enabled() const { return deep_sleep_enabled_; }
 
 private:
     uint16_t sleep_timeout_seconds_ = 60;
@@ -149,6 +158,9 @@ public:
     void grant_app_permission(const char *app_id, const char *permission);
     void revoke_app_permission(const char *app_id, const char *permission);
     void save_security_prefs();
+    bool dnd_enabled() const { return dnd_enabled_; }
+    uint16_t dnd_start_time() const { return dnd_start_time_; }
+    uint16_t dnd_end_time() const { return dnd_end_time_; }
 
 private:
     bool dnd_enabled_ = false;
@@ -205,4 +217,3 @@ private:
 };
 
 }  // namespace buddhas_watch
-

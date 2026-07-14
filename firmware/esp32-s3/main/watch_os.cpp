@@ -4,9 +4,11 @@
 #include <cstring>
 #include <cstdio>
 #include <ctime>
+#include <limits>
 
 extern "C" {
 #include "esp_log.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "sys/stat.h"
@@ -23,6 +25,7 @@ constexpr const char *kTag = "WATCH_OS";
 constexpr const char *kDataDir = "/data";
 constexpr const char *kSettingsPath = "/data/settings_config.json";
 constexpr const char *kKnownNetworksPath = "/data/known_networks.json";
+constexpr const char *kFirmwareVersion = "2.0.0";
 
 void ensure_data_dir() {
     struct stat st = {};
@@ -69,7 +72,10 @@ void write_json_file(const char *path, cJSON *root) {
         return;
     }
 
-    fwrite(json, 1, strlen(json), f);
+    const size_t json_len = strlen(json);
+    if (fwrite(json, 1, json_len, f) != json_len) {
+        ESP_LOGE(kTag, "Failed writing %s", path);
+    }
     fclose(f);
     cJSON_free(json);
 }
@@ -78,7 +84,7 @@ void save_unified_settings(const ConnectivitySettings &connectivity, uint8_t bri
                            uint16_t screen_timeout_ms, Theme theme, bool aod_enabled,
                            uint8_t ringtone_volume, uint8_t media_volume,
                            bool vibration_enabled, VibroIntensity vibration_intensity,
-                           uint16_t sleep_timeout_ms, bool deep_sleep_enabled,
+                           uint16_t sleep_timeout_seconds, bool deep_sleep_enabled,
                            bool microphone_enabled, bool dnd_enabled, uint16_t dnd_start,
                            uint16_t dnd_end, bool privacy_mode) {
     ensure_data_dir();
@@ -91,7 +97,7 @@ void save_unified_settings(const ConnectivitySettings &connectivity, uint8_t bri
     for (const auto &network : connectivity.known_networks()) {
         cJSON *entry = cJSON_CreateObject();
         cJSON_AddStringToObject(entry, "ssid", network.ssid.c_str());
-        cJSON_AddStringToObject(entry, "password", network.password_hash.c_str());
+        cJSON_AddBoolToObject(entry, "credentials_saved", false);
         cJSON_AddItemToArray(known, entry);
     }
 
@@ -107,8 +113,16 @@ void save_unified_settings(const ConnectivitySettings &connectivity, uint8_t bri
     cJSON_AddBoolToObject(audio, "vibration_enabled", vibration_enabled);
     cJSON_AddStringToObject(audio, "vibration_intensity", vibro_to_string(vibration_intensity));
 
+    const uint32_t max_seconds = std::numeric_limits<uint32_t>::max() / 1000U;
+    const uint32_t safe_seconds = std::min<uint32_t>(sleep_timeout_seconds, max_seconds);
+    const uint64_t sleep_timeout_ms = static_cast<uint64_t>(safe_seconds) * 1000ULL;
+
     cJSON *power = cJSON_AddObjectToObject(root, "power");
-    cJSON_AddNumberToObject(power, "sleep_timeout_ms", sleep_timeout_ms);
+    cJSON_AddNumberToObject(
+        power, "sleep_timeout_ms",
+        sleep_timeout_ms > std::numeric_limits<uint32_t>::max()
+            ? std::numeric_limits<uint32_t>::max()
+            : static_cast<uint32_t>(sleep_timeout_ms));
     cJSON_AddBoolToObject(power, "deep_sleep_enabled", deep_sleep_enabled);
     cJSON_AddBoolToObject(power, "battery_saver_mode", false);
 
@@ -144,9 +158,10 @@ void ConnectivitySettings::connect_to_network(const char *ssid, const char *pass
     if (!ssid || strlen(ssid) == 0) {
         return;
     }
+    (void)password;
     current_network_ = ssid;
     current_rssi_ = -42;
-    known_networks_.push_back({ssid, password ? password : ""});
+    known_networks_.push_back({ssid});
     ESP_LOGI(kTag, "Connected to %s", ssid);
 }
 
@@ -171,7 +186,7 @@ void ConnectivitySettings::save_known_networks() {
     for (const auto &entry : known_networks_) {
         cJSON *network = cJSON_CreateObject();
         cJSON_AddStringToObject(network, "ssid", entry.ssid.c_str());
-        cJSON_AddStringToObject(network, "password", entry.password_hash.c_str());
+        cJSON_AddBoolToObject(network, "credentials_saved", false);
         cJSON_AddItemToArray(known, network);
     }
     write_json_file(kKnownNetworksPath, root);
@@ -240,7 +255,7 @@ void AudioSettings::save_audio_prefs() {
 }
 
 uint8_t PowerSettings::get_battery_percent() {
-    return 82;
+    return static_cast<uint8_t>(40U + (esp_random() % 56U));
 }
 
 bool PowerSettings::is_charging() {
@@ -261,7 +276,7 @@ void PowerSettings::show_battery_stats() {
 }
 
 uint32_t PowerSettings::estimate_remaining_time() {
-    return 9U * 60U * 60U;
+    return static_cast<uint32_t>(get_battery_percent()) * 6U * 60U;
 }
 
 void PowerSettings::save_power_prefs() {
@@ -307,7 +322,7 @@ void SensorSettings::save_sensor_prefs() {
 }
 
 void SystemSettings::display_firmware_info() {
-    ESP_LOGI(kTag, "Firmware v2.0.0 build=%s %s", __DATE__, __TIME__);
+    ESP_LOGI(kTag, "Firmware v%s build=%s %s", kFirmwareVersion, __DATE__, __TIME__);
 }
 
 void SystemSettings::display_storage_usage() {
@@ -322,8 +337,11 @@ void SystemSettings::delete_file(const char *path) {
     if (!path || strlen(path) == 0) {
         return;
     }
-    unlink(path);
-    ESP_LOGI(kTag, "Deleted %s", path);
+    if (unlink(path) == 0) {
+        ESP_LOGI(kTag, "Deleted %s", path);
+        return;
+    }
+    ESP_LOGE(kTag, "Failed to delete %s", path);
 }
 
 void SystemSettings::clear_all_logs() {
@@ -360,8 +378,18 @@ void SecuritySettings::toggle_dnd() {
 
 bool SecuritySettings::is_in_dnd_period() {
     std::time_t now = std::time(nullptr);
-    std::tm *tm = std::localtime(&now);
-    const uint16_t current = static_cast<uint16_t>((tm->tm_hour * 100) + tm->tm_min);
+    if (now == static_cast<std::time_t>(-1)) {
+        return false;
+    }
+    std::tm tm_now = {};
+    if (localtime_r(&now, &tm_now) == nullptr) {
+        return false;
+    }
+    if (tm_now.tm_hour < 0 || tm_now.tm_hour > 23 || tm_now.tm_min < 0 || tm_now.tm_min > 59) {
+        return false;
+    }
+    const uint16_t current = static_cast<uint16_t>(
+        (static_cast<uint16_t>(tm_now.tm_hour) * 100U) + static_cast<uint16_t>(tm_now.tm_min));
 
     if (dnd_start_time_ <= dnd_end_time_) {
         return current >= dnd_start_time_ && current <= dnd_end_time_;
@@ -408,7 +436,6 @@ void SettingsApp::render() {
 
 void SettingsApp::launch_connectivity_settings() {
     connectivity_.render_wifi_list();
-    connectivity_.connect_to_network("Buddhas-Net", "hash_encrypted");
     connectivity_.show_connection_status();
 }
 
@@ -453,20 +480,20 @@ void SettingsApp::persist_all() {
     system_.save_system_log();
 
     save_unified_settings(connectivity_,
-                          80,
-                          30000,
-                          Theme::Dark,
-                          false,
-                          70,
-                          60,
-                          true,
-                          VibroIntensity::Medium,
-                          60000,
-                          true,
+                          display_.brightness(),
+                          display_.screen_timeout_ms(),
+                          display_.theme(),
+                          display_.aod_enabled(),
+                          audio_.ringtone_volume(),
+                          audio_.media_volume(),
+                          audio_.vibration_enabled(),
+                          audio_.vibration_intensity(),
+                          power_.sleep_timeout_seconds(),
+                          power_.deep_sleep_enabled(),
                           sensors_.get_microphone_enabled(),
-                          false,
-                          2200,
-                          700,
+                          security_.dnd_enabled(),
+                          security_.dnd_start_time(),
+                          security_.dnd_end_time(),
                           security_.is_privacy_mode_enabled());
 }
 
