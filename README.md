@@ -88,9 +88,17 @@ Jetson (detection) ──UDP:5501──► ESP32 Watch
 
 ## 🆕 WatchOS Firmware Architecture (PR #6)
 
-**Status:** ✅ Merged | **Release:** v2.0.0-watchos
+**Release:** v2.0.0-watchos
 
 The firmware has been refactored from a single-purpose CSI node into a full OS-style architecture with layered services, persistent settings, and multi-protocol streaming.
+
+### Runtime Highlights
+
+The firmware boot path now starts from `main/main.cpp` and initializes a full watch OS scaffold (`main/watch_os.cpp`) that includes:
+- Touch launcher app list (CSI Collector, Settings, System Monitor, BLE/USB/Wi-Fi servers, App Store)
+- Settings app with 7 modules (Connectivity, Display, Audio, Power, Sensors, System, Security)
+- Multi-protocol CSI streaming manager (BLE, Wi-Fi TCP/UDP, USB-C CDC, mDNS)
+- Unified settings persistence in `/data/settings_config.json`
 
 ### Boot Architecture
 
@@ -153,6 +161,12 @@ Coordinated startup of streaming protocols with hardware driver integration poin
 - **mDNS** - Service discovery and advertising
 
 **Status:** Hardware driver stubs in place; ready for real driver integration
+
+### Data Logging
+
+- SD card local logging (offline mode — operates without Jetson)
+- UDP streaming to Jetson (online mode)
+- Dual-mode operation — seamless transition
 
 ### Command Receiver Hardening
 
