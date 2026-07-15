@@ -397,9 +397,6 @@ bool SecuritySettings::is_in_dnd_period() {
     if (localtime_r(&now, &tm_now) == nullptr) {
         return false;
     }
-    if (tm_now.tm_hour < 0 || tm_now.tm_hour > 23 || tm_now.tm_min < 0 || tm_now.tm_min > 59) {
-        return false;
-    }
     const uint16_t current = static_cast<uint16_t>(
         (static_cast<uint16_t>(tm_now.tm_hour) * 100U) + static_cast<uint16_t>(tm_now.tm_min));
 
