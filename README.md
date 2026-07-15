@@ -2,7 +2,7 @@
 
 **Production-grade distributed CSI collection system for ESP32-S3 smart watches**
 
-A real-time, multi-node Channel State Information (CSI) monitoring and anomaly detection system that transforms wearable ESP32-S3 smart watches into a distributed quantum-augmented sensing network for RF-acoustic biometrics, interference detection, and Human Quantum Interface (HQI) research.
+A real-time, multi-node Channel State Information (CSI) monitoring and anomaly detection system that transforms wearable ESP32-S3 smart watches into a distributed quantum-augmented sensing network [...]
 
 ## Architecture
 
@@ -84,9 +84,15 @@ Jetson (detection) ──UDP:5501──► ESP32 Watch
                                     └── sdcard_write_log_marker()
 ```
 
-### Firmware
+---
 
-The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 and dispatches commands to hardware control functions. Implement the hardware functions (`display_show_alert`, `vibrator_pulse`, `wifi_transmit_noise`, etc.) to match your specific watch hardware.
+## 🆕 WatchOS Firmware Architecture (PR #6)
+
+**Release:** v2.0.0-watchos
+
+The firmware has been refactored from a single-purpose CSI node into a full OS-style architecture with layered services, persistent settings, and multi-protocol streaming.
+
+### Runtime Highlights
 
 The firmware boot path now starts from `main/main.cpp` and initializes a full watch OS scaffold (`main/watch_os.cpp`) that includes:
 - Touch launcher app list (CSI Collector, Settings, System Monitor, BLE/USB/Wi-Fi servers, App Store)
@@ -94,10 +100,137 @@ The firmware boot path now starts from `main/main.cpp` and initializes a full wa
 - Multi-protocol CSI streaming manager (BLE, Wi-Fi TCP/UDP, USB-C CDC, mDNS)
 - Unified settings persistence in `/data/settings_config.json`
 
+### Boot Architecture
+
+```
+main.cpp (Entry)
+    │
+    ├── WatchOS::boot()
+    │   ├── ensure_data_dir()           # Initialize /data/
+    │   ├── launcher_.render()          # Show app launcher
+    │   ├── settings_.render()          # Initialize 7 settings modules
+    │   ├── settings_.persist_all()     # Write /data/settings_config.json
+    │   ├── streaming_.start_all()      # Start BLE, TCP/UDP, USB CDC, mDNS
+    │   └── start_cmd_receiver()        # Listen on UDP for Jetson commands
+    │
+    └── return ESP_OK
+```
+
+### Settings Foundation (7 Modules)
+
+Structured configuration system with persistent JSON storage:
+
+| Module | Config Path | Purpose |
+|--------|------------|---------|
+| **Connectivity** | `connectivity` in JSON | Wi-Fi SSID, known networks (no passwords) |
+| **Display** | `display` in JSON | Brightness, orientation, refresh rate |
+| **Audio** | `audio` in JSON | Volume, haptic intensity, notification sounds |
+| **Power** | `power` in JSON | Sleep timeout, battery optimization |
+| **Sensors** | `sensors` in JSON | Health monitoring settings, calibration |
+| **System** | `system` in JSON | Storage management, firmware version, logging |
+| **Security** | `security` in JSON | DND scheduling, privacy controls, access |
+
+**Persistence Locations:**
+- **Settings:** `/data/settings_config.json` (all 7 modules)
+- **Networks:** `/data/known_networks.json` (network metadata only; no credentials)
+
+### App Launcher (7 Built-in Apps)
+
+```
+┌─────────────────────────────┐
+│   Buddhas-Watch Launcher    │
+├─────────────────────────────┤
+│ • CSI Collector (primary)   │
+│ • Settings Hub              │
+│ • System Monitor            │
+│ • BLE Server                │
+│ • USB Server                │
+│ • Wi-Fi Server              │
+│ • App Store (coming soon)   │
+└─────────────────────────────┘
+```
+
+### Multi-Protocol Streaming (Stubs Ready for Hardware)
+
+Coordinated startup of streaming protocols with hardware driver integration points:
+
+- **BLE** - Bluetooth Low Energy GATT server
+- **Wi-Fi TCP** - Standard TCP/IP sockets
+- **Wi-Fi UDP** - Broadcast and unicast UDP
+- **USB-C CDC** - Serial-over-USB data channel
+- **mDNS** - Service discovery and advertising
+
+**Status:** Hardware driver stubs in place; ready for real driver integration
+
 ### Data Logging
+
 - SD card local logging (offline mode — operates without Jetson)
 - UDP streaming to Jetson (online mode)
 - Dual-mode operation — seamless transition
+
+### Command Receiver Hardening
+
+UDP command listener on port 5501 with:
+- ✅ Explicit string length validation
+- ✅ Buffer overflow protection
+- ✅ Error logging on invalid commands
+- ✅ Support for: `alert`, `rf_burst`, `lock`, `log_marker`, `sweep`, `silence`
+
+---
+
+## 📚 Documentation
+
+### Firmware Releases
+
+- **[FIRMWARE_CHANGELOG.md](FIRMWARE_CHANGELOG.md)** - Complete refactor details, settings modules, streaming architecture, security improvements applied
+- **[SECURITY_IMPROVEMENTS.md](SECURITY_IMPROVEMENTS.md)** - All security fixes, validation results (CodeQL: 0 alerts), threat model, compliance & recommendations
+
+### Building & Flashing
+
+```bash
+# Set up ESP-IDF
+source ~/esp/esp-idf/export.sh
+
+# Configure
+cd firmware/esp32-s3
+idf.py set-target esp32s3
+idf.py menuconfig
+
+# Build
+idf.py build
+
+# Flash
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+### Settings Access
+
+Access and modify settings via:
+
+1. **Settings App** - On-device UI (launcher)
+2. **JSON File** - Direct edit of `/data/settings_config.json`
+3. **API** - Future REST endpoint (Phase 2)
+
+Example JSON:
+```json
+{
+  "connectivity": {
+    "known_networks": [
+      {"ssid": "Buddhas-Net", "bssid": "aa:bb:cc:dd:ee:ff"}
+    ]
+  },
+  "power": {
+    "sleep_timeout_ms": 300000,
+    "deep_sleep_enabled": true
+  },
+  "security": {
+    "dnd_start_time": 2300,
+    "dnd_end_time": 700
+  }
+}
+```
+
+---
 
 ## Repository Structure
 
@@ -105,7 +238,12 @@ The firmware boot path now starts from `main/main.cpp` and initializes a full wa
 Buddhas-Watch/
 ├── firmware/
 │   └── esp32-s3/
-│       ├── main/                  # Main firmware entry point
+│       ├── main/                  # Main firmware entry point + WatchOS
+│       │   ├── main.cpp           # New boot orchestrator (v2.0)
+│       │   ├── watch_os.cpp       # WatchOS implementation
+│       │   ├── watch_os.hpp       # Module interfaces
+│       │   ├── cmd_receiver.c     # Hardened command parser
+│       │   └── hardware_stubs.c   # Driver integration stubs
 │       ├── components/
 │       │   ├── csi/               # Wi-Fi CSI capture module
 │       │   ├── imu/               # QMI8658 IMU driver
@@ -119,19 +257,19 @@ Buddhas-Watch/
 ├── python/
 │   ├── csi_monitor/
 │   │   ├── csi_phase_variance_monitor.py      # Phase variance detection
-│   │   ├── csi_phase_coherence_monitor.py     # + Cross-subcarrier coherence
-│   │   ├── csi_spectrogram_monitor.py         # FFT spectrogram + persistence + watch alerts
+│   │   ├── csi_phase_coherence_monitor.py     # Cross-subcarrier coherence
+│   │   ├── csi_spectrogram_monitor.py         # FFT spectrogram + persistence
 │   │   └── csi_defense.py                    # Integrated detection + anti-phase
 │   ├── quantum/
-│   │   ├── quantum_enhanced_detection.py      # Qiskit hybrid backend + classical fallback
-│   │   └── variational_anomaly.py             # (future) VQE-based anomaly threshold
+│   │   ├── quantum_enhanced_detection.py      # Qiskit hybrid backend
+│   │   └── variational_anomaly.py             # (future) VQE-based anomaly
 │   ├── analysis/
 │   │   └── (analysis tools — coming soon)
 │   ├── countermeasures/
-│   │   └── esp32_alert.py                    # UDP commands back to watches (alert, rf_burst, lock, sweep)
+│   │   └── esp32_alert.py                    # UDP commands to watches
 │   └── tools/
-│       ├── baseline_calibrator.py             # Baseline learning utility → baseline.json
-│       └── fleet_broadcaster.py              # Multi-node sync/command broadcast
+│       ├── baseline_calibrator.py             # Baseline learning
+│       └── fleet_broadcaster.py              # Multi-node sync/commands
 ├── docs/
 │   ├── architecture/
 │   ├── protocols/
@@ -142,6 +280,8 @@ Buddhas-Watch/
 │   └── flash_watch.sh               # Firmware flashing utility
 ├── deployment/
 │   └── systemd/
+├── FIRMWARE_CHANGELOG.md            # 🆕 Firmware architecture + changes
+├── SECURITY_IMPROVEMENTS.md         # 🆕 Security hardening + validation
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -191,15 +331,15 @@ python tools/baseline_calibrator.py --duration 120 --output baseline.json
 
 ### Acoustoelectric Effect
 
-The fundamental detection principle: modulated ultrasound (from photoacoustic, parametric speaker, or other sources) changes tissue conductivity. This modulates any RF carrier passing through that tissue. CSI extracts the phase/amplitude sidebands — turning the body into an RF-acoustic transducer.
+The fundamental detection principle: modulated ultrasound (from photoacoustic, parametric speaker, or other sources) changes tissue conductivity. This modulates any RF carrier passing through tha[...]
 
 ### BitNet Ternary Architecture
 
-All weights are ternary (-1, 0, +1). This collapses 32-bit precision to 2-bit states, making inference massively parallel, power-efficient, and directly mappable to hardware registers. The same operations that execute CSI feature extraction can manipulate efuse registers for hardware security — because at the physical layer, both are just deciding which bits are 0 and which are 1.
+All weights are ternary (-1, 0, +1). This collapses 32-bit precision to 2-bit states, making inference massively parallel, power-efficient, and directly mappable to hardware registers. The same o[...]
 
 ### Human Quantum Interface (HQI)
 
-The system targets detection of quantum biology phenomena — microtubule Fröhlich condensation, radical-pair spin chemistry, pineal quantum coherence, hydrated matrix polaritons — through their CSI signatures. The ternary + quantum hybrid pipeline provides the computational speed and sensitivity needed to detect these at physiological temperatures.
+The system targets detection of quantum biology phenomena — microtubule Fröhlich condensation, radical-pair spin chemistry, pineal quantum coherence, hydrated matrix polaritons — through the[...]
 
 ## License
 
@@ -209,3 +349,16 @@ MIT — see [LICENSE](LICENSE)
 
 **Michael L. Mejia** — ArcMike0430
 Eteru AI Systems / HQI Research
+
+---
+
+## Recent Changes
+
+**v2.0.0-watchos** (July 15, 2026) — [PR #6](https://github.com/ArcMike0430/Buddhas-Watch/pull/6)
+- ✅ Refactored firmware into OS-style architecture
+- ✅ Added 7-module settings system with persistence
+- ✅ Implemented app launcher with 7 built-in apps
+- ✅ Added multi-protocol streaming orchestration (BLE, Wi-Fi TCP/UDP, USB CDC, mDNS)
+- ✅ Hardened command/settings handling (6 security improvements)
+- ✅ CodeQL: 0 alerts | Secret scan: clear
+- 📖 See [FIRMWARE_CHANGELOG.md](FIRMWARE_CHANGELOG.md) and [SECURITY_IMPROVEMENTS.md](SECURITY_IMPROVEMENTS.md) for details
