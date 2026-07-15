@@ -25,4 +25,3 @@ extern "C" void app_main(void) {
     WatchOS os;
     ESP_ERROR_CHECK(os.boot());
 }
-

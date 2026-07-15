@@ -123,14 +123,10 @@ void save_unified_settings(const ConnectivitySettings &connectivity, uint8_t bri
 
     const uint32_t max_seconds = std::numeric_limits<uint32_t>::max() / 1000U;
     const uint32_t safe_seconds = std::min<uint32_t>(sleep_timeout_seconds, max_seconds);
-    const uint64_t sleep_timeout_ms = static_cast<uint64_t>(safe_seconds) * 1000ULL;
+    const uint32_t sleep_timeout_ms = safe_seconds * 1000U;
 
     cJSON *power = cJSON_AddObjectToObject(root, "power");
-    cJSON_AddNumberToObject(
-        power, "sleep_timeout_ms",
-        sleep_timeout_ms > std::numeric_limits<uint32_t>::max()
-            ? std::numeric_limits<uint32_t>::max()
-            : static_cast<uint32_t>(sleep_timeout_ms));
+    cJSON_AddNumberToObject(power, "sleep_timeout_ms", sleep_timeout_ms);
     cJSON_AddBoolToObject(power, "deep_sleep_enabled", deep_sleep_enabled);
     cJSON_AddBoolToObject(power, "battery_saver_mode", false);
 

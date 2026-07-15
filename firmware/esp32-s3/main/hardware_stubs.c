@@ -27,4 +27,3 @@ void wifi_lock_channel(int channel) {
 void sdcard_write_log_marker(const char *event, const char *json_details) {
     ESP_LOGI(TAG, "sdcard_write_log_marker event=%s details=%s", event ? event : "unknown", json_details ? json_details : "{}");
 }
-
