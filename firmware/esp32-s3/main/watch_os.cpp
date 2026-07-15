@@ -26,6 +26,8 @@ constexpr const char *kDataDir = "/data";
 constexpr const char *kSettingsPath = "/data/settings_config.json";
 constexpr const char *kKnownNetworksPath = "/data/known_networks.json";
 constexpr const char *kFirmwareVersion = "2.0.0";
+constexpr uint16_t kMinScreenTimeoutMs = 1000;
+constexpr uint16_t kMaxScreenTimeoutMs = 60000;
 
 void ensure_data_dir() {
     struct stat st = {};
@@ -54,6 +56,12 @@ const char *vibro_to_string(VibroIntensity intensity) {
             return "medium";
         case VibroIntensity::Strong:
             return "strong";
+    }
+
+    bool is_valid_hhmm(uint16_t value) {
+        const uint16_t hours = value / 100U;
+        const uint16_t minutes = value % 100U;
+        return hours < 24U && minutes < 60U;
     }
     return "medium";
 }
@@ -199,7 +207,7 @@ void DisplaySettings::set_brightness(uint8_t percent) {
 }
 
 void DisplaySettings::set_screen_timeout(uint16_t milliseconds) {
-    screen_timeout_ms_ = milliseconds;
+    screen_timeout_ms_ = std::clamp(milliseconds, kMinScreenTimeoutMs, kMaxScreenTimeoutMs);
     ESP_LOGI(kTag, "Screen timeout=%u ms", screen_timeout_ms_);
 }
 
@@ -367,6 +375,10 @@ void SystemSettings::save_system_log() {
 }
 
 void SecuritySettings::set_dnd_schedule(uint16_t start_time, uint16_t end_time) {
+    if (!is_valid_hhmm(start_time) || !is_valid_hhmm(end_time)) {
+        ESP_LOGW(kTag, "Rejected invalid DND schedule %04u-%04u", start_time, end_time);
+        return;
+    }
     dnd_start_time_ = start_time;
     dnd_end_time_ = end_time;
 }
