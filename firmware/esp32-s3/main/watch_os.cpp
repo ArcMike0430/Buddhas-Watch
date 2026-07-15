@@ -57,13 +57,13 @@ const char *vibro_to_string(VibroIntensity intensity) {
         case VibroIntensity::Strong:
             return "strong";
     }
-
-    bool is_valid_hhmm(uint16_t value) {
-        const uint16_t hours = value / 100U;
-        const uint16_t minutes = value % 100U;
-        return hours < 24U && minutes < 60U;
-    }
     return "medium";
+}
+
+bool is_valid_hhmm(uint16_t value) {
+    const uint16_t hours = value / 100U;
+    const uint16_t minutes = value % 100U;
+    return hours < 24U && minutes < 60U;
 }
 
 void write_json_file(const char *path, cJSON *root) {
