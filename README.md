@@ -88,6 +88,12 @@ Jetson (detection) ──UDP:5501──► ESP32 Watch
 
 The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 and dispatches commands to hardware control functions. Implement the hardware functions (`display_show_alert`, `vibrator_pulse`, `wifi_transmit_noise`, etc.) to match your specific watch hardware.
 
+The firmware boot path now starts from `main/main.cpp` and initializes a full watch OS scaffold (`main/watch_os.cpp`) that includes:
+- Touch launcher app list (CSI Collector, Settings, System Monitor, BLE/USB/Wi-Fi servers, App Store)
+- Settings app with 7 modules (Connectivity, Display, Audio, Power, Sensors, System, Security)
+- Multi-protocol CSI streaming manager (BLE, Wi-Fi TCP/UDP, USB-C CDC, mDNS)
+- Unified settings persistence in `/data/settings_config.json`
+
 ### Data Logging
 - SD card local logging (offline mode — operates without Jetson)
 - UDP streaming to Jetson (online mode)
