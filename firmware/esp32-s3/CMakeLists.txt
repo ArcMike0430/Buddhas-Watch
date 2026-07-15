@@ -1,3 +1,15 @@
-idf_component_register(SRCS "main/main.c"
-                    INCLUDE_DIRS "main"
-                    EMBED_FILES "main/CMakeLists.txt")
+idf_component_register(
+    SRCS
+        "main/main.cpp"
+        "main/watch_os.cpp"
+        "main/cmd_receiver.c"
+        "main/hardware_stubs.c"
+    INCLUDE_DIRS
+        "main"
+    REQUIRES
+        nvs_flash
+        esp_netif
+        esp_event
+        esp_wifi
+        cjson
+)

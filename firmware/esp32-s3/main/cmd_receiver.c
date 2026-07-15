@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -57,7 +58,11 @@ static void handle_command(const char *json_str) {
         return;
     }
 
-    const char *command = cmd->cJSON_IsString(cmd) ? cmd->valuestring : "";
+    const char *command = cJSON_GetStringValue(cmd);
+    if (!command) {
+        cJSON_Delete(root);
+        return;
+    }
 
     // Extract common params
     float freq = 0;

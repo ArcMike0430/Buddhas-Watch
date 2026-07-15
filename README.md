@@ -4,6 +4,9 @@
 
 A real-time, multi-node Channel State Information (CSI) monitoring and anomaly detection system that transforms wearable ESP32-S3 smart watches into a distributed quantum-augmented sensing network for RF-acoustic biometrics, interference detection, and Human Quantum Interface (HQI) research.
 
+📄 **[FIRMWARE_CHANGELOG.md](FIRMWARE_CHANGELOG.md)** — Full firmware change history  
+🔒 **[SECURITY_IMPROVEMENTS.md](SECURITY_IMPROVEMENTS.md)** — Security hardening details
+
 ## Architecture
 
 ```
@@ -84,9 +87,62 @@ Jetson (detection) ──UDP:5501──► ESP32 Watch
                                     └── sdcard_write_log_marker()
 ```
 
-### Firmware
+### Firmware Architecture (v2.0.0)
 
-The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 and dispatches commands to hardware control functions. Implement the hardware functions (`display_show_alert`, `vibrator_pulse`, `wifi_transmit_noise`, etc.) to match your specific watch hardware.
+> **Merged in [PR #6](https://github.com/ArcMike0430/Buddhas-Watch/pull/6) — commit `7fff344`**  
+> See [FIRMWARE_CHANGELOG.md](FIRMWARE_CHANGELOG.md) for full details and [SECURITY_IMPROVEMENTS.md](SECURITY_IMPROVEMENTS.md) for hardening applied.
+
+#### Boot Sequence
+
+```
+main.cpp
+  └─► WatchOS::boot()
+        ├─ AppLauncher::render()          — display built-in app grid
+        ├─ SettingsHub::render()           — initialise settings modules
+        ├─ SettingsHub::persist_all()      — write /data/settings_config.json
+        ├─ StreamingManager::start_all()   — BLE + TCP/UDP + USB CDC + mDNS
+        └─ start_cmd_receiver()            — UDP command task (port 5501)
+```
+
+#### Settings Modules (7)
+
+| Module | Persisted fields |
+|--------|-----------------|
+| Connectivity | SSID metadata, BLE on/off |
+| Display | Brightness, timeout, theme, AOD |
+| Audio / Haptics | Volume levels, vibration intensity |
+| Power | Sleep timeout, deep-sleep enable |
+| Sensors / Health | Microphone, DND schedule |
+| System / Storage | Firmware version, diagnostics |
+| Security / Privacy | Privacy mode |
+
+**Settings persistence paths:**
+
+| File | Contents |
+|------|----------|
+| `/data/settings_config.json` | All settings modules (no credentials) |
+| `/data/known_networks.json` | SSID metadata only |
+
+#### Multi-Protocol Streaming Roadmap
+
+| Protocol | Status |
+|----------|--------|
+| Wi-Fi UDP → Jetson | ✅ Active |
+| Wi-Fi TCP | 🔧 Stub wired, driver integration pending |
+| BLE GATT | 🔧 Stub wired, driver integration pending |
+| USB-C CDC | 🔧 Stub wired, driver integration pending |
+| mDNS publication | 🔧 Stub wired, driver integration pending |
+
+#### Hardware Stub Integration
+
+Hardware-specific functions (`display_show_alert`, `vibrator_pulse`, `led_flash_pattern`,
+`wifi_transmit_noise`, `wifi_lock_channel`, `sdcard_write_log_marker`) are declared in
+`firmware/esp32-s3/main/hardware_stubs.c` with no-op bodies. Replace each stub with
+the appropriate Waveshare board driver calls once the display, vibrator, and radio
+peripherals are wired up.
+
+The ESP32-S3 firmware includes `cmd_receiver.c` which listens on UDP port 5501 and
+dispatches commands to hardware control functions.
 
 ### Data Logging
 - SD card local logging (offline mode — operates without Jetson)
